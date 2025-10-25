@@ -1,3 +1,5 @@
+# Handles chord logic
+
 import numpy as np
 
 C_MAJOR = [0,2,4,5,7,9,11]  # scale degrees in semitones from C
@@ -57,6 +59,22 @@ def chord_from(root_midi, quality):
     else:  # 'sus'
         intervals = [0, 5, 7]
     return [root_midi + i for i in intervals]
+
+# chord voicing: keeps notes in range
+def voice_chord(notes, low = 48, high = 72):
+    voiced=[]
+    for n in notes:
+        while n < low: n += 12
+        while n > high: n -= 12
+        voiced.append(n)
+    voiced.sort()
+
+    if voiced and (max(voiced) - min(voiced) > 12):
+        voiced[0] += 12
+        voiced.sort()
+
+    return voiced
+    notes = voice_chord(notes, 48, 72)
 
 def velocity_from_spread(hands):
     if hands is None or hands.shape[0] == 0:
