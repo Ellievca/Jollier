@@ -1,0 +1,100 @@
+# .github/project_board.yml
+name: "🎹 Hand Composer – AMD Hackathon Project"
+description: "A gesture-based music visualizer powered by AMD ROCm + FSR"
+public: true
+
+# Columns for your Kanban board
+columns:
+  - name: 🏁 Backlog
+    description: "Ideas, unstarted tasks, or notes to triage."
+  - name: 🚧 In Progress
+    description: "Active development tasks."
+  - name: 🧪 Testing
+    description: "Tasks ready for or undergoing testing."
+  - name: ✅ Done
+    description: "Completed tasks and deliverables."
+
+# Automatically create cards under each phase
+draft_issues:
+  - title: "Set up environment & verify AMD ROCm"
+    body: |
+      - [ ] Install dependencies (OpenCV, MediaPipe, PyTorch ROCm)
+      - [ ] Verify GPU visibility (`rocminfo`, `torch.version.hip`)
+      - [ ] Initialize Git repo + .gitignore
+    labels: ["setup", "mvp"]
+    column: 🏁 Backlog
+
+  - title: "Implement webcam capture & hand landmarks"
+    body: |
+      - [ ] Capture webcam frames via OpenCV
+      - [ ] Integrate MediaPipe Hands → draw landmarks
+      - [ ] Display FPS and latency
+    labels: ["vision", "mvp"]
+    column: 🚧 In Progress
+
+  - title: "Map gestures to chords (rule-based)"
+    body: |
+      - [ ] Right-hand Y → chord root
+      - [ ] Left-hand pose → major/minor/7/sus
+      - [ ] Hand spread → velocity
+      - [ ] Hands distance → tempo
+    labels: ["music-engine", "mvp"]
+    column: 🚧 In Progress
+
+  - title: "Integrate MIDI output"
+    body: |
+      - [ ] Create virtual MIDI port (mido/python-rtmidi)
+      - [ ] Play chords through Fluidsynth or DAW
+      - [ ] Confirm latency under 100 ms
+    labels: ["audio", "mvp"]
+    column: 🚧 In Progress
+
+  - title: "Basic visualizer (PyGame)"
+    body: |
+      - [ ] Show FPS, chord name, tempo
+      - [ ] Animate simple shapes on note-on events
+      - [ ] Display inference time
+    labels: ["visualizer", "mvp"]
+    column: 🧪 Testing
+
+  - title: "Train ROCm-accelerated gesture classifier"
+    body: |
+      - [ ] Collect dataset of labeled gestures
+      - [ ] Train MLP/LSTM on AMD Developer Cloud
+      - [ ] Export TorchScript model
+      - [ ] Compare CPU vs ROCm inference performance
+    labels: ["ai", "rocm", "polish"]
+    column: 🚧 In Progress
+
+  - title: "Upgrade visualizer to Unity/Unreal + FSR 4"
+    body: |
+      - [ ] Move rendering to game engine
+      - [ ] Integrate FidelityFX Super Resolution 4 for upscaling
+      - [ ] Add particle and lighting effects synced to velocity
+    labels: ["fsr", "visuals", "polish"]
+    column: 🧪 Testing
+
+  - title: "Create architecture diagram & README"
+    body: |
+      - [ ] Diagram: Capture → Perception → Music → Viz
+      - [ ] Document ROCm, FSR, and AMD Cloud usage
+      - [ ] Include setup and demo instructions
+    labels: ["docs", "presentation"]
+    column: 🏁 Backlog
+
+  - title: "Record demo video + live script"
+    body: |
+      - [ ] 30–60 s recording showing gestures + HUD + visuals
+      - [ ] Prepare 90-second live pitch script
+      - [ ] Capture CPU vs GPU benchmark overlay
+    labels: ["presentation", "final"]
+    column: 🧪 Testing
+
+  - title: "Deliver final demo at hackathon"
+    body: |
+      - [ ] Confirm AMD ROCm + FSR performance proof
+      - [ ] Polish visuals and latency metrics
+      - [ ] Sync audio/video for live performance
+      - [ ] Push final build to repo
+    labels: ["demo", "deadline"]
+    column: ✅ Done

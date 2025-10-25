@@ -1,0 +1,67 @@
+name: Hand Composer Tasks
+description: Automatically generate core issues for the AMD Hackathon "Hand Composer" project
+title: "[Task] "
+labels: ["hackathon", "hand-composer"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🧠 Hand Composer – Task Breakdown
+        Select the checklist below to track progress through MVP → Polished Demo → Wow layers.
+        Each sub-section can be broken out into its own issue if you prefer.
+
+  - type: checkboxes
+    id: mvp
+    attributes:
+      label: ✅ MVP – Playable Demo
+      options:
+        - label: Create Python virtual environment and install dependencies (OpenCV, MediaPipe, PyTorch ROCm, mido, python-rtmidi, fluidsynth)
+        - label: Verify GPU recognition (`rocminfo`, `torch.version.hip`)
+        - label: Webcam stream + draw hand landmarks via MediaPipe
+        - label: Apply EMA smoothing to landmarks
+        - label: Implement rule-based gesture→music mapping (right-hand Y, left-hand pose, spread, distance)
+        - label: Build `midi_engine.py` and send chords to virtual MIDI / Fluidsynth
+        - label: Basic PyGame HUD (FPS, chord, tempo, latency metrics)
+        - label: Confirm end-to-end latency < 100 ms for playable feel
+
+  - type: checkboxes
+    id: polished
+    attributes:
+      label: 💎 Polished Demo – Looks & Feels Pro
+      options:
+        - label: Add key/scale switching and chord inversions
+        - label: Implement progression mode (gesture-based ii–V–I cycling)
+        - label: Collect gesture dataset, train classifier on AMD Developer Cloud
+        - label: Export TorchScript model and run inference on ROCm
+        - label: Display CPU vs ROCm inference times on HUD
+        - label: Move visualizer to Unity/Unreal with FSR 4 upscaling
+        - label: Add particle/color FX synced to chord velocity
+        - label: Build on-screen control panel + preset saving
+
+  - type: checkboxes
+    id: wow
+    attributes:
+      label: 🚀 Wow Layer – Go Beyond
+      options:
+        - label: Add AI accompaniment (bass + drums) using ROCm-accelerated model
+        - label: Implement voice→key detection using Librosa pitch analysis
+        - label: Map Z-depth to audio filter or reverb FX
+        - label: Add pinch gesture for loop recording
+        - label: Multi-user split-role mode (two players)
+
+  - type: checkboxes
+    id: presentation
+    attributes:
+      label: 🧩 Presentation & Deliverables
+      options:
+        - label: Create architecture diagram (Capture → Perception → Music → Viz)
+        - label: Capture performance screenshot (CPU vs ROCm)
+        - label: Record 30–60 s demo video showing hands + HUD + visuals
+        - label: Write 90-second live-demo script
+        - label: Update README to document AMD tech usage (ROCm, FSR, Developer Cloud)
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Additional Notes / Sub-tasks
+      description: Add links, troubleshooting notes, or code snippets relevant to this issue.

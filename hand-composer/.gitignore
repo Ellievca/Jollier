@@ -1,0 +1,35 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+build/
+dist/
+
+# --- Virtual environments ---
+.venv/
+.venv310/
+venv/
+env/
+
+# --- OS/editor junk ---
+.DS_Store
+.vscode/
+.idea/
+
+# --- Big assets / generated stuff ---
+assets/sf2/
+*.sf2
+*.wav
+*.mp3
+*.mp4
+*.zip
+*.onnx
+*.pt
+*.tflite
+.mediapipe/
+
+# --- Caches ---
+.cache/
+pip-wheel-metadata/
