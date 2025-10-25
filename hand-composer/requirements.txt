@@ -26,6 +26,7 @@ pillow==12.0.0
 protobuf==4.25.8
 pycparser==2.23
 #pyfluidsynth==1.3.4
+#pyfluidsynth==1.3.4 (no longer using)
 pygame==2.6.1
 pyparsing==3.2.5
 python-dateutil==2.9.0.post0
