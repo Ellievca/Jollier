@@ -3,11 +3,11 @@ import pygame
 import numpy as np
 
 class HUD:
-    def __init__(self, width=960, height=540):
+    def __init__(self, width=1280, height=720):
         pygame.init()
         self.w, self.h = width, height
         self.screen = pygame.display.set_mode((self.w, self.h))
-        pygame.display.set_caption("Hand Composer – MVP")
+        pygame.display.set_caption("Hand Composer")
         self.font = pygame.font.SysFont("Arial", 20)
         self.clock = pygame.time.Clock()
 
@@ -50,7 +50,7 @@ class HUD:
         lines = [
             f"Chord: {chord_label}",
             f"BPM: {bpm}    Velocity: {velocity}",
-            f"Camera FPS: {fps_cam:.1f}    Inference: {infer_ms:.2f} ms",
+            # f"Camera FPS: {fps_cam:.1f}    Inference: {infer_ms:.2f} ms",
             "Tips: Right-hand height = root, Left-hand openness = quality (maj/min/7)",
         ]
         y = 10

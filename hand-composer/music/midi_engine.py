@@ -1,6 +1,6 @@
 # music/midi_engine.py
 import os, time
-import fluidsynth  # pip package 'pyfluidsynth' but import name is 'fluidsynth'
+import fluidsynth  # download pip package 'pyfluidsynth' but import name is 'fluidsynth'!!
 
 class MidiEngine:
     def __init__(self, soundfont_path=None):
