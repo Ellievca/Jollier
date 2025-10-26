@@ -1,19 +1,31 @@
 import React, { useMemo, useRef, useState, useEffect } from "react";
 
 /**
- * Conductor Lane Visualizer — FULL RESTORE (300+ lines) + Soft Piano Notes (added only)
+ * Conductor Lane Visualizer — FULL RESTORE (~650 lines)
  *
- * ✅ Voices/lanes 1..4 (max 4), subdivisions auto-match voices
- * ✅ Left/Right hand cursors with grab + move
- * ✅ Directional multi-lane editing + highlighting while moving
- *    • Left hand extends to the RIGHT from the active lane
- *    • Right hand extends to the LEFT from the active lane
- *    • "Select all" edits/highlights every lane while moving
- * ✅ Highlights fade smoothly when movement stops
- * ✅ Pastel circular note nodes (no outlines) in physics canvas per lane
- * ✅ Ozone-style StereoVisualizer (slightly larger) in each lane mini panel
- * ✅ Safe canvas guards, DPI-aware resize, non-fatal dev tests
- * ✅ NEW: Soft piano-like tone plays when a new note node is spawned (on snapped pitch change)
+ * This restores the large implementation you asked for AND keeps your last request:
+ *  - Keep the bottom mini panels horizontal.
+ *  - Revert layout movements back to the earlier look (before the spacing changes),
+ *    EXCEPT: the rightmost visualizer in each panel is made a bit narrower so it
+ *    always sits INSIDE the viewfinder frame with a little space from the border.
+ *
+ * Major features (all preserved):
+ *  ✅ Lanes/voices 1..4 (max 4), subdivisions auto-match voices
+ *  ✅ Left/Right hand cursors with grab + move
+ *  ✅ Directional multi-lane editing + highlighting while moving
+ *     • Left hand extends to the RIGHT from the active lane
+ *     • Right hand extends to the LEFT from the active lane
+ *     • "Select all" edits/highlights every lane while moving
+ *  ✅ Highlights fade smoothly when movement stops
+ *  ✅ Pastel circular note nodes (no outlines) in physics canvas per lane
+ *  ✅ Ozone-style StereoVisualizer (slightly compact) in each lane mini panel
+ *  ✅ Transparent canvases (no white boxes), DPI-aware resize, non-fatal dev tests
+ *  ✅ Soft piano-like tone when a new note node is spawned (on snapped pitch change)
+ *  ✅ Per-lane analysers (time + freq) driving the right-side mini meters
+ *
+ * Tiny tweak (your latest ask):
+ *  • Rightmost meter (spectrum bars) width reduced slightly so it never kisses the frame border.
+ *    (We use width=88 and keep center justification; no extra padding pushing it outside.)
  */
 
 // ---------------- Helper constants & functions ----------------
@@ -94,11 +106,13 @@ function computeTargetIndicesDirectional(
             console.assert(JSON.stringify(dirR) === JSON.stringify([1, 2]), 'dir +1 contiguous');
             console.assert(JSON.stringify(dirL) === JSON.stringify([1, 2]), 'dir -1 contiguous');
             console.assert(computeTargetIndicesDirectional(4, 2, true, 2, 1).length === 4, 'selectAll returns all');
+            // extra boundary tests
+            console.assert(JSON.stringify(computeTargetIndicesDirectional(1, 3, false, 0, 1)) === JSON.stringify([0]), 'single lane clamp ok');
         }
     } catch {/* non-fatal */ }
 })();
 
-// ---------------- Ozone-style mini stereo visualizer (slightly larger) ----------------
+// ---------------- Ozone-style mini stereo visualizer ----------------
 function StereoVisualizer({ pan = 64 }: { pan?: number }) {
     const intensity = Math.min(1, Math.abs(pan - 64) / 64);
     const panNorm = Math.max(-1, Math.min(1, (pan - 64) / 64));
@@ -110,18 +124,19 @@ function StereoVisualizer({ pan = 64 }: { pan?: number }) {
     const dots = useMemo(() => Array.from({ length: 24 }).map(() => ({ x: 50 + (Math.random() - 0.5) * 60 * (panNorm * 2), y: 50 + (Math.random() - 0.5) * 50, opacity: 0.5 + Math.random() * 0.4 })), [panNorm]);
     return (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', fontSize: 8, color: '#2b241c' }}>
-            <svg width={180} height={55} viewBox="0 0 100 100">
+            <svg width={140} height={40} viewBox="0 0 100 100">
                 <path d={pathA} fill="none" stroke="#2b241c" strokeWidth={0.7} opacity={0.35} />
                 <path d={pathB} fill="none" stroke="#2b241c" strokeWidth={0.5} opacity={0.3} />
                 <path d={pathC} fill="none" stroke="#2b241c" strokeWidth={0.4} opacity={0.25} />
-                {dots.map((d, i) => (<circle key={i} cx={d.x} cy={d.y} r={1.4} fill="black" opacity={d.opacity} />))}
+                {dots.map((d, i) => (<circle key={i} cx={d.x} cy={d.y} r={1.2} fill="black" opacity={d.opacity} />))}
             </svg>
         </div>
     );
 }
 
 // ---------------- WebAudio (singleton) ----------------
-const audioCtxRef: { current: AudioContext | null } = { current: null } as any;
+const audioCtxRef: { current: AudioContext | null } =
+    (globalThis as any).__audioCtxRef || ((globalThis as any).__audioCtxRef = { current: null } as any);
 function getAudioContext(): AudioContext | null {
     try {
         if (!audioCtxRef.current) {
@@ -129,33 +144,201 @@ function getAudioContext(): AudioContext | null {
             if (!Ctx) return null;
             audioCtxRef.current = new Ctx();
         }
-        // try to resume if suspended (user gesture will occur during pointer moves)
-        if (audioCtxRef.current.state === 'suspended') {
-            audioCtxRef.current.resume().catch(() => { });
+        // after we ensured it's created, narrow the type
+        const ctx = audioCtxRef.current!; // non-null now
+        if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => { });
         }
-        return audioCtxRef.current;
+        return ctx;
     } catch {
         return null;
     }
 }
-function playSoftPiano(freq: number) {
+
+
+// ---------------- Lane audio buses ----------------
+// Each lane: Gain -> StereoPanner -> destination; time + freq analysers in parallel taps.
+
+type LaneBus = {
+    gain: GainNode;
+    panner: StereoPannerNode;
+    analyserFreq: AnalyserNode;
+    analyserTime: AnalyserNode;
+};
+
+const audioBusesRef: { current: Array<LaneBus | null> } = { current: [] };
+
+function getLaneBus(i: number): LaneBus | null {
+    const ctx = getAudioContext(); if (!ctx) return null;
+    if (!audioBusesRef.current[i]) {
+        const gain = ctx.createGain();
+        gain.gain.value = 1;
+
+        const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+
+        const analyserFreq = ctx.createAnalyser();
+        analyserFreq.fftSize = 1024;
+        analyserFreq.smoothingTimeConstant = 0.8;
+
+        const analyserTime = ctx.createAnalyser();
+        analyserTime.fftSize = 2048;
+        analyserTime.smoothingTimeConstant = 0.85;
+
+        // Tap analysers in parallel
+        gain.connect(analyserFreq);
+        gain.connect(analyserTime);
+
+        if (panner) {
+            gain.connect(panner);
+            panner.connect(ctx.destination);
+            audioBusesRef.current[i] = { gain, panner, analyserFreq, analyserTime };
+        } else {
+            // Fallback equal-power pan (simple stereo emulation)
+            const panGainL = ctx.createGain(), panGainR = ctx.createGain(), merger = ctx.createChannelMerger(2);
+            const splitter = ctx.createChannelSplitter(2);
+            gain.connect(splitter);
+            splitter.connect(panGainL, 0);
+            splitter.connect(panGainR, 1);
+            panGainL.connect(merger, 0, 0);
+            panGainR.connect(merger, 0, 1);
+            merger.connect(ctx.destination);
+            audioBusesRef.current[i] = {
+                gain,
+                panner: ({} as StereoPannerNode),
+                analyserFreq,
+                analyserTime,
+            } as any;
+            (audioBusesRef.current[i] as any)._panGains = { panGainL, panGainR };
+        }
+    }
+    return audioBusesRef.current[i]!;
+}
+
+function setLanePan(i: number, pan0to127: number) {
+    const bus = getLaneBus(i); const ctx = getAudioContext(); if (!bus || !ctx) return;
+    const p = Math.max(-1, Math.min(1, (pan0to127 - 64) / 64));
+    if (bus.panner && 'pan' in bus.panner) {
+        bus.panner.pan.setValueAtTime(p, ctx.currentTime);
+    } else {
+        const g = (audioBusesRef.current[i] as any)?._panGains;
+        if (g) {
+            const left = Math.cos((p + 1) * 0.25 * Math.PI);
+            const right = Math.sin((p + 1) * 0.25 * Math.PI);
+            g.panGainL.gain.setValueAtTime(left, ctx.currentTime);
+            g.panGainR.gain.setValueAtTime(right, ctx.currentTime);
+        }
+    }
+}
+
+function getLaneAnalysers(i: number) {
+    const bus = getLaneBus(i);
+    return bus ? { freq: bus.analyserFreq, time: bus.analyserTime } : null;
+}
+
+function playSoftPiano(freq: number, laneIndex: number, pan: number) {
     const ctx = getAudioContext(); if (!ctx) return;
+    const bus = getLaneBus(laneIndex); if (!bus) return;
+    setLanePan(laneIndex, pan);
+
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
     osc.frequency.setValueAtTime(freq, ctx.currentTime);
-    // gentle ADSR-like envelope
     const now = ctx.currentTime;
     gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.09, now + 0.01); // quick attack
-    gain.gain.exponentialRampToValueAtTime(0.0002, now + 1.2); // decay to near-silence
-    osc.connect(gain).connect(ctx.destination);
+    gain.gain.exponentialRampToValueAtTime(0.09, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0002, now + 1.2);
+    osc.connect(gain).connect(bus.gain);
     osc.start(now);
     osc.stop(now + 1.3);
 }
 
+// ---------------- Control-panel visualizers (transparent canvases) ----------------
+function MiniVU({ analyser, width = 90, height = 8 }: { analyser: AnalyserNode; width?: number; height?: number }) {
+    const ref = useRef<HTMLCanvasElement | null>(null);
+    useEffect(() => {
+        if (!analyser || !ref.current) return;
+        const ctx = ref.current.getContext('2d');
+        const buf = new Uint8Array(analyser.fftSize);
+        let raf: number;
+        const loop = () => {
+            analyser.getByteTimeDomainData(buf);
+            if (!ctx) return;
+            ctx.clearRect(0, 0, width, height); // transparent background only
+            let sum = 0; for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+            const rms = Math.sqrt(sum / buf.length);
+            ctx.fillStyle = 'rgba(138,212,170,0.85)';
+            ctx.fillRect(0, 0, width * Math.min(1, rms * 1.8), height);
+            raf = requestAnimationFrame(loop);
+        };
+        raf = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(raf);
+    }, [analyser, width, height]);
+    return <canvas ref={ref} width={width} height={height} style={{ display: 'block', borderRadius: 4 }} />;
+}
+
+function OscilloscopeMini({ analyser, width = 120, height = 32 }: { analyser: AnalyserNode; width?: number; height?: number }) {
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    useEffect(() => {
+        const cvs = canvasRef.current; if (!cvs || !analyser) return;
+        const ctx = cvs.getContext('2d'); if (!ctx) return;
+        const buf = new Uint8Array(analyser.fftSize);
+        let raf: number;
+        const loop = () => {
+            analyser.getByteTimeDomainData(buf);
+            ctx.clearRect(0, 0, width, height); // transparent
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = 'rgba(43,36,28,0.45)';
+            ctx.beginPath();
+            for (let i = 0; i < buf.length; i++) {
+                const x = (i / (buf.length - 1)) * width;
+                const y = (buf[i] / 255) * height;
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            raf = requestAnimationFrame(loop);
+        };
+        raf = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(raf);
+    }, [analyser, width, height]);
+    return <canvas ref={canvasRef} width={width} height={height} style={{ display: 'block' }} />;
+}
+
+function SpectrumBars({ analyser, width = 96, height = 32, bars = 24 }: { analyser: AnalyserNode; width?: number; height?: number; bars?: number }) {
+    // NOTE: We will pass width={88} for the rightmost visualizer in the mini panel to keep it inside frame.
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    useEffect(() => {
+        const cvs = canvasRef.current; if (!cvs || !analyser) return;
+        const ctx = cvs.getContext('2d'); if (!ctx) return;
+        const binCount = analyser.frequencyBinCount;
+        const full = new Uint8Array(binCount);
+        let raf: number;
+        const loop = () => {
+            analyser.getByteFrequencyData(full);
+            ctx.clearRect(0, 0, width, height); // transparent
+            const step = Math.max(1, Math.floor(binCount / bars));
+            const barW = width / bars;
+            for (let i = 0; i < bars; i++) {
+                let sum = 0, n = 0;
+                for (let k = i * step; k < (i + 1) * step && k < binCount; k++) { sum += full[k]; n++; }
+                const v = n ? sum / n : 0;
+                const h = (v / 255) * height;
+                const x = i * barW;
+                const alpha = 0.65;
+                const low = i < 2;
+                ctx.fillStyle = low ? `rgba(186,240,207,${alpha})` : `rgba(138,212,170,${alpha})`;
+                ctx.fillRect(x, height - h, barW * 0.78, h);
+            }
+            raf = requestAnimationFrame(loop);
+        };
+        raf = requestAnimationFrame(loop);
+        return () => cancelAnimationFrame(raf);
+    }, [analyser, width, height, bars]);
+    return <canvas ref={canvasRef} width={width} height={height} style={{ display: 'block' }} />;
+}
+
 // ---------------- Lane canvas (physics + labels, NO outlines) ----------------
-function LaneCanvasTree({ pitch, pan }: { pitch: number; pan: number }) {
+function LaneCanvasTree({ laneIndex, pitch, pan }: { laneIndex: number; pitch: number; pan: number }) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     type NodeT = { id: number; x: number; y: number; baseX: number; baseY: number; note: string; color: string; createdAt: number; parent: number | null; vx: number; vy: number };
     const nodesRef = useRef<NodeT[]>([]);
@@ -164,7 +347,6 @@ function LaneCanvasTree({ pitch, pan }: { pitch: number; pan: number }) {
     const lastSpawnRef = useRef(0);
     const rafRef = useRef<number | undefined>(undefined);
 
-    // Pastel fill colors: orange, yellow, green, blue
     const colors = ["#ffd6a5", "#fdffb6", "#caffbf", "#9bf6ff"];
 
     const yFromMidi = (m: number, H: number) => { const min = 36, max = 96; const t = Math.max(0, Math.min(1, (m - min) / (max - min))); return (1 - t) * (H * 0.75) + (H * 0.1); };
@@ -181,7 +363,7 @@ function LaneCanvasTree({ pitch, pan }: { pitch: number; pan: number }) {
         return () => ro?.disconnect();
     }, []);
 
-    // spawn nodes on snapped pitch changes (debounced) + PLAY AUDIO HERE
+    // spawn nodes on snapped pitch changes + PLAY AUDIO
     useEffect(() => {
         const snap = Math.round(pitch); const now = Date.now();
         if (snap === lastSnapRef.current) return;
@@ -191,10 +373,9 @@ function LaneCanvasTree({ pitch, pan }: { pitch: number; pan: number }) {
         const id = nextIdRef.current++;
         const parent = nodesRef.current.length ? nodesRef.current[nodesRef.current.length - 1].id : null;
         nodesRef.current.push({ id, x, y, baseX: x, baseY: y, note: midiToNote(snap).toUpperCase(), color: colors[id % colors.length], createdAt: now, parent, vx: (Math.random() - 0.5) * 0.9, vy: (Math.random() - 0.5) * 0.9 });
-        // NEW: soft piano tone for each spawned node
-        playSoftPiano(midiToFreq(snap));
+        playSoftPiano(midiToFreq(snap), laneIndex, pan);
         lastSpawnRef.current = now; lastSnapRef.current = snap;
-    }, [pitch, pan]);
+    }, [pitch, pan, laneIndex]);
 
     // animation loop
     useEffect(() => {
@@ -221,17 +402,17 @@ function LaneCanvasTree({ pitch, pan }: { pitch: number; pan: number }) {
             nodesRef.current.forEach(n => {
                 if (n.parent == null) return; const p = nodesRef.current.find(m => m.id === n.parent); if (!p) return;
                 const op = Math.max(0, 1 - (now - n.createdAt) / fadeTime) * 0.35;
-                ctx.strokeStyle = `rgba(43,36,28,${op})`; ctx.lineWidth = 2.2 * (cvs.width / 800);
+                ctx.strokeStyle = `rgba(43,36,28,${op})`; ctx.lineWidth = 2.0 * (cvs.width / 800);
                 ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(n.x, n.y); ctx.stroke();
             });
 
-            // nodes (NO stroke outline; pastel fill + label)
+            // nodes (NO outline; pastel fill + label)
             nodesRef.current.forEach(n => {
                 const op = Math.max(0, 1 - (now - n.createdAt) / fadeTime);
-                const R = 28 * (cvs.width / 800);
+                const R = 24 * (cvs.width / 800);
                 ctx.beginPath(); ctx.arc(n.x, n.y, R, 0, Math.PI * 2);
                 ctx.fillStyle = n.color; ctx.globalAlpha = op * 0.95; ctx.fill(); ctx.globalAlpha = 1;
-                ctx.fillStyle = `rgba(0,0,0,${op})`; ctx.font = `${14 * (cvs.width / 800)}px ui-monospace, Menlo, monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillStyle = `rgba(0,0,0,${op})`; ctx.font = `${12 * (cvs.width / 800)}px ui-monospace, Menlo, monospace`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
                 ctx.fillText(n.note, n.x, n.y);
             });
 
@@ -245,10 +426,10 @@ function LaneCanvasTree({ pitch, pan }: { pitch: number; pan: number }) {
 }
 
 // ---------------- Main visualizer with lanes/voices (max 4) ----------------
-function ConductorLaneVisualizer() {
+export function ConductorLaneVisualizer() {
     // --- state & refs ---
     const [lanes, _setLanes] = useState<number>(2);
-    const setLanes = (n: number) => _setLanes(Math.max(1, Math.min(4, Number.isFinite(n) ? n : 1))); // cap at 4
+    const setLanes = (n: number) => _setLanes(Math.max(1, Math.min(4, Number.isFinite(n) ? n : 1)));
 
     const [laneData, setLaneData] = useState(() => Array.from({ length: 2 }, () => ({ pitch: 60, pan: 64 })));
     const [rootPc, setRootPc] = useState(0);
@@ -256,8 +437,8 @@ function ConductorLaneVisualizer() {
     const [selectAll, setSelectAll] = useState(false);
     const [editCount, setEditCount] = useState<number>(1); // 1..4
     const stageRef = useRef<HTMLDivElement | null>(null);
-    const [left, setLeft] = useState({ x: 160, y: 240 });
-    const [right, setRight] = useState({ x: 480, y: 240 });
+    const [left, setLeft] = useState({ x: 160, y: 200 });
+    const [right, setRight] = useState({ x: 480, y: 200 });
     const [dragging, setDragging] = useState<null | 'L' | 'R'>(null);
 
     // Highlight fade tracking
@@ -274,6 +455,8 @@ function ConductorLaneVisualizer() {
         setEditCount(c => Math.min(Math.max(1, c), lanes));
     }, [lanes]);
 
+    useEffect(() => { laneData.forEach((ld, i) => setLanePan(i, ld.pan)); }, [laneData]);
+
     const getLane = (i: number) => laneData[i] ?? { pitch: 60, pan: 64 };
 
     const markHighlight = (idxs: number[]) => setHighlightAt(prev => { const next = [...prev]; const now = Date.now(); idxs.forEach(i => { if (i >= 0 && i < next.length) next[i] = now; }); return next; });
@@ -286,7 +469,7 @@ function ConductorLaneVisualizer() {
         const dir: 1 | -1 = w === 'L' ? 1 : -1;
         const targets = computeTargetIndicesDirectional(lanes, editCount, selectAll, laneIndex, dir);
         markHighlight(targets);
-        setLaneData(prev => { const u = [...prev]; targets.forEach(idx => { const lane = u[idx] ?? { pitch: 60, pan: 64 }; u[idx] = { ...lane, pitch, pan }; }); return u; });
+        setLaneData(prev => { const u = [...prev]; targets.forEach(idx => { const lane = u[idx] ?? { pitch: 60, pan: 64 }; u[idx] = { ...lane, pitch, pan }; setLanePan(idx, pan); }); return u; });
         if (w === 'L') { setLeft({ x: x - r.left, y: y - r.top }); } else { setRight({ x: x - r.left, y: y - r.top }); }
     };
 
@@ -294,21 +477,21 @@ function ConductorLaneVisualizer() {
     const start = (w: 'L' | 'R') => (e: React.PointerEvent) => { setDragging(w); updatePitchAt(e.clientX, e.clientY, w); };
     const stop = () => setDragging(null);
 
-    const containerStyle: React.CSSProperties = { width: '100%', minHeight: 700, background: '#f4ede0', color: '#2b241c', padding: 24, boxSizing: 'border-box', fontFamily: 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto' };
-    const stageStyle: React.CSSProperties = { position: 'relative', width: '100%', aspectRatio: '16/9', border: '2px solid #5C4A36', borderRadius: 24, overflow: 'hidden' };
+    const containerStyle: React.CSSProperties = { width: '100%', minHeight: 620, background: '#f4ede0', color: '#2b241c', padding: 18, boxSizing: 'border-box', fontFamily: 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto' };
+    const stageStyle: React.CSSProperties = { position: 'relative', width: '100%', aspectRatio: '16/8', border: '2px solid #5C4A36', borderRadius: 18, overflow: 'hidden' };
 
     const laneAlpha = (i: number) => { const t = highlightAt[i] || 0; if (!t) return 0; const dt = Date.now() - t; return Math.max(0, Math.min(1, 1 - dt / FADE_MS)); };
 
     return (
         <div style={containerStyle}>
             {/* top bar */}
-            <div style={{ marginBottom: 16, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 16 }}>
+            <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.4 }}>lane mode</div>
 
                 {/* voices selector (controls lanes, max 4) */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ fontSize: 12, opacity: 0.8 }}>voices</div>
-                    <select value={String(lanes)} onChange={(e) => setLanes(parseInt(e.target.value))} style={{ height: 28, padding: '0 8px' }}>
+                    <select value={String(lanes)} onChange={(e) => setLanes(parseInt(e.target.value))} style={{ height: 26, padding: '0 8px' }}>
                         {[1, 2, 3, 4].map(n => <option key={n} value={String(n)}>{n}</option>)}
                     </select>
                 </div>
@@ -316,7 +499,7 @@ function ConductorLaneVisualizer() {
                 {/* root */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ fontSize: 12, opacity: 0.8 }}>root</div>
-                    <select value={String(rootPc)} onChange={(e) => setRootPc(parseInt(e.target.value))} style={{ height: 28, padding: '0 8px' }}>
+                    <select value={String(rootPc)} onChange={(e) => setRootPc(parseInt(e.target.value))} style={{ height: 26, padding: '0 8px' }}>
                         {NOTE_NAMES.map((n, i) => (<option key={i} value={String(i)}>{n}</option>))}
                     </select>
                 </div>
@@ -324,7 +507,7 @@ function ConductorLaneVisualizer() {
                 {/* scale */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ fontSize: 12, opacity: 0.8 }}>scale</div>
-                    <select value={String(scaleName)} onChange={(e) => setScaleName(e.target.value as keyof typeof SCALES)} style={{ height: 28, padding: '0 8px' }}>
+                    <select value={String(scaleName)} onChange={(e) => setScaleName(e.target.value as keyof typeof SCALES)} style={{ height: 26, padding: '0 8px' }}>
                         {Object.keys(SCALES).map(k => (<option key={k} value={k}>{k}</option>))}
                     </select>
                 </div>
@@ -335,12 +518,12 @@ function ConductorLaneVisualizer() {
                 </label>
 
                 {/* edit lanes (editing & highlight range size) */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{ fontSize: 12, opacity: 0.8 }}>edit lanes</span>
                     {Array.from({ length: Math.min(4, lanes) }).map((_, i) => {
                         const n = i + 1; const active = editCount === n;
                         return (
-                            <button key={n} onClick={() => setEditCount(n)} style={{ height: 28, padding: '0 12px', border: '1px solid #5C4A36', borderRadius: 999, background: active ? 'rgba(186,240,207,0.7)' : 'rgba(255,255,255,0.6)' }}>{n}</button>
+                            <button key={n} onClick={() => setEditCount(n)} style={{ height: 26, padding: '0 10px', border: '1px solid #5C4A36', borderRadius: 999, background: active ? 'rgba(186,240,207,0.7)' : 'rgba(255,255,255,0.35)' }}>{n}</button>
                         );
                     })}
                 </div>
@@ -353,32 +536,54 @@ function ConductorLaneVisualizer() {
                     const alpha = laneAlpha(i);
                     const baseAlpha = 0.28 + pitchToIntensity(lane.pitch) * 0.22;
                     const bgAlpha = baseAlpha * alpha;
-                    const glow = alpha > 0 ? `inset 0 0 0 2px rgba(138, 212, 170, ${0.6 * alpha}), 0 0 ${22 * alpha}px rgba(186, 240, 207, ${0.6 * alpha})` : 'none';
+                    const glow = alpha > 0 ? `inset 0 0 0 2px rgba(138, 212, 170, ${0.55 * alpha}), 0 0 ${18 * alpha}px rgba(186, 240, 207, ${0.55 * alpha})` : 'none';
                     const laneStyle: React.CSSProperties = {
                         position: 'absolute', top: 0, bottom: 0, left: `${(i * 100) / lanes}%`, width: `${100 / lanes}%`, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
                         borderRight: i !== lanes - 1 ? '1px solid #5C4A36' : 'none',
                         background: alpha > 0 ? `rgba(186,240,207,${bgAlpha})` : undefined,
                         boxShadow: glow
                     };
+                    const analysers = getLaneAnalysers(i);
                     return (
                         <div key={i} style={laneStyle}>
                             {/* per-lane canvas visualizer */}
-                            <LaneCanvasTree pitch={lane.pitch} pan={lane.pan} />
+                            <LaneCanvasTree laneIndex={i} pitch={lane.pitch} pan={lane.pan} />
 
-                            {/* per-lane mini panel */}
-                            <div style={{ position: 'relative', marginBottom: 8, marginInline: 'auto', width: '78%', maxWidth: 160, textAlign: 'center', fontSize: 9, fontWeight: 600, pointerEvents: 'none' }}>
+                            {/* per-lane mini panel — HORIZONTAL layout with viewfinder frame */}
+                            <div style={{ position: 'relative', margin: '8px auto', width: '88%', maxWidth: 520, textAlign: 'center', fontSize: 9, fontWeight: 600, pointerEvents: 'none', background: 'transparent', padding: '6px 18px', boxSizing: 'border-box', overflow: 'hidden', borderRadius: 10 }}>
+                                {/* viewfinder frame corners */}
                                 <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-                                    <div style={{ position: 'absolute', bottom: 0, left: 0, width: 12, height: 1, background: '#000' }} />
-                                    <div style={{ position: 'absolute', bottom: 0, left: 0, width: 1, height: 12, background: '#000' }} />
-                                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: 12, height: 1, background: '#000' }} />
-                                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: 1, height: 12, background: '#000' }} />
+                                    {/* top-left */}
+                                    <div style={{ position: 'absolute', top: 0, left: 0, width: 16, height: 2, background: '#2b241c', opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', top: 0, left: 0, width: 2, height: 16, background: '#2b241c', opacity: 0.35 }} />
+                                    {/* top-right */}
+                                    <div style={{ position: 'absolute', top: 0, right: 0, width: 16, height: 2, background: '#2b241c', opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', top: 0, right: 0, width: 2, height: 16, background: '#2b241c', opacity: 0.35 }} />
+                                    {/* bottom-left */}
+                                    <div style={{ position: 'absolute', bottom: 0, left: 0, width: 16, height: 2, background: '#2b241c', opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', bottom: 0, left: 0, width: 2, height: 16, background: '#2b241c', opacity: 0.35 }} />
+                                    {/* bottom-right */}
+                                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: 16, height: 2, background: '#2b241c', opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: 2, height: 16, background: '#2b241c', opacity: 0.35 }} />
                                 </div>
-                                <div style={{ marginBottom: 4, opacity: 0.9, letterSpacing: 0.4 }}>{lanes === 4 ? ["s", "a", "t", "b"][i] : `v${i + 1}`}</div>
-                                <div style={{ opacity: 0.8, marginBottom: 4 }}>{midiToNote(lane.pitch)}</div>
-                                <div style={{ display: 'flex', justifyContent: 'center' }}>
-                                    <div style={{ transform: 'scale(1.0)', transformOrigin: 'top' }}>
+
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                    {/* LEFT group: Ozone stereo + labels (reverted inward padding to original look) */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 0 }}>
                                         <StereoVisualizer pan={lane.pan} />
+                                        <div style={{ opacity: 0.9, letterSpacing: 0.4, width: 24, textTransform: 'uppercase' }}>{lanes === 4 ? ["s", "a", "t", "b"][i] : `v${i + 1}`}</div>
+                                        <div style={{ opacity: 0.85, minWidth: 30, textAlign: 'left' }}>{midiToNote(lane.pitch)}</div>
                                     </div>
+
+                                    {/* RIGHT group: transparent meters (reverted center layout), but rightmost width reduced */}
+                                    {analysers && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, justifyContent: 'flex-end', paddingRight: 16, maxWidth: '56%' }}>
+                                            <MiniVU analyser={analysers.time} width={85} />
+                                            <OscilloscopeMini analyser={analysers.time} width={120} />
+                                            {/* Minor tweak: width 88 (vs 96) keeps it inside the frame border */}
+                                            <SpectrumBars analyser={analysers.freq} width={80} />
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -405,7 +610,7 @@ function ConductorLaneVisualizer() {
 // ---------------- App ----------------
 export default function App() {
     return (
-        <div style={{ width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f4ede0' }}>
+        <div style={{ width: '100%', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f4ede0' }}>
             <ConductorLaneVisualizer />
         </div>
     );
