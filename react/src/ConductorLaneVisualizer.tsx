@@ -546,7 +546,7 @@ export function ConductorLaneVisualizer() {
         if (w === 'L') { setLeft({ x: x - r.left, y: y - r.top }); } else { setRight({ x: x - r.left, y: y - r.top }); }
     };
 
-    // Hand tracking handler
+    // Hand tracking handler - updated to support simultaneous hand control
     const handleHandUpdate = (centers: Array<{x: number, y: number, label: string}>) => {
         if (!stageRef.current || !useHandTracking) return;
         
@@ -554,17 +554,64 @@ export function ConductorLaneVisualizer() {
         const videoWidth = 640;
         const videoHeight = 480;
         
+        // Process both hands simultaneously
         centers.forEach(hand => {
             // Map hand position from video coordinates to stage coordinates
             // Mirror x coordinate since video is mirrored
             const mappedX = stageRect.left + ((videoWidth - hand.x) / videoWidth) * stageRect.width;
             const mappedY = stageRect.top + (hand.y / videoHeight) * stageRect.height;
             
-            // Update position based on hand label
-            if (hand.label === 'left') {
-                updatePitchAt(mappedX, mappedY, 'R'); // Mirrored: left hand controls R marker
-            } else if (hand.label === 'right') {
-                updatePitchAt(mappedX, mappedY, 'L'); // Mirrored: right hand controls L marker
+            // Calculate pitch and pan for this hand
+            const { laneIndex, pan } = computePanForX(mappedX, stageRect, lanes);
+            const raw = Math.max(21, Math.min(108 - ((mappedY - stageRect.top) / stageRect.height) * 60, 108));
+            const pitch = snapToScale(raw, rootPc, SCALES[scaleName]);
+            
+            // Each hand controls its own marker and sends its own MIDI
+            const marker = hand.label === 'left' ? 'R' : 'L';
+            const dir: 1 | -1 = marker === 'L' ? 1 : -1;
+            const targets = computeTargetIndicesDirectional(lanes, editCount, selectAll, laneIndex, dir);
+            
+            // Update visual position
+            if (marker === 'L') {
+                setLeft({ x: mappedX - stageRect.left, y: mappedY - stageRect.top });
+            } else {
+                setRight({ x: mappedX - stageRect.left, y: mappedY - stageRect.top });
+            }
+            
+            // Update lane data
+            markHighlight(targets);
+            setLaneData(prev => {
+                const u = [...prev];
+                targets.forEach(idx => {
+                    const lane = u[idx] ?? { pitch: 60, pan: 64 };
+                    u[idx] = { ...lane, pitch, pan };
+                    setLanePan(idx, pan);
+                });
+                return u;
+            });
+            
+            // Send MIDI for this hand
+            const out = midiRef.current;
+            if (out) {
+                targets.forEach(idx => {
+                    const ch = Math.min(16, Math.max(MIDI_CHANNEL_BASE, idx + MIDI_CHANNEL_BASE));
+                    const newNote = Math.round(pitch);
+                    const prevNote = lastNoteRef.current[idx];
+                    
+                    if (prevNote != null && prevNote !== newNote) {
+                        out.sendNoteOff(ch - 1, prevNote);
+                    }
+                    if (prevNote !== newNote) {
+                        const vel = Math.max(1, Math.min(127, Math.round(20 + 100 * pitchToIntensity(newNote))));
+                        out.sendNote(ch - 1, newNote, vel);
+                        lastNoteRef.current[idx] = newNote;
+                    }
+                    
+                    if (panCacheRef.current[idx] !== pan) {
+                        out.sendCC(ch - 1, 10, pan);
+                        panCacheRef.current[idx] = pan;
+                    }
+                });
             }
         });
     };
