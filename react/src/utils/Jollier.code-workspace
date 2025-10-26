@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "../../.."
+		},
+		{
+			"path": "../../../../../../conductorVisualizer/conductor-visualizer/node_modules"
+		}
+	],
+	"settings": {
+		"git.ignoreLimitWarning": true
+	}
+}
