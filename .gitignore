@@ -12,12 +12,12 @@ dist/
 .venv310/
 venv/
 env/
+node_modules/
 
 # --- OS/editor junk ---
 .DS_Store
 .vscode/
 .idea/
-node_modules/
 
 # --- Big assets / generated stuff ---
 assets/sf2/
