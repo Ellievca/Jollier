@@ -434,6 +434,12 @@ export function ConductorLaneVisualizer() {
     const lastSendMsRef = useRef(0);
     const panCacheRef = useRef<Record<number, number>>({});
 
+    // Refs to hold current settings for hand tracking (avoid stale closure values)
+    const settingsRef = useRef({ rootPc, scaleName, lanes, editCount, selectAll });
+    useEffect(() => {
+        settingsRef.current = { rootPc, scaleName, lanes, editCount, selectAll };
+    }, [rootPc, scaleName, lanes, editCount, selectAll]);
+
     // Highlight fade tracking
     const FADE_MS = 900;
     const [highlightAt, setHighlightAt] = useState<number[]>(() => Array.from({ length: 2 }, () => 0));
@@ -546,36 +552,108 @@ export function ConductorLaneVisualizer() {
         if (w === 'L') { setLeft({ x: x - r.left, y: y - r.top }); } else { setRight({ x: x - r.left, y: y - r.top }); }
     };
 
-    // Hand tracking handler
+    // Hand tracking handler - throttled and batched updates
+    const lastHandUpdateRef = useRef(0);
     const handleHandUpdate = (centers: Array<{x: number, y: number, label: string}>) => {
         if (!stageRef.current || !useHandTracking) return;
+        
+        // Throttle updates to reduce re-render frequency (30fps max)
+        const now = performance.now();
+        if (now - lastHandUpdateRef.current < 33) return;
+        lastHandUpdateRef.current = now;
         
         const stageRect = stageRef.current.getBoundingClientRect();
         const videoWidth = 640;
         const videoHeight = 480;
         
+        // Get current settings from ref to avoid stale closure values
+        const { rootPc: currentRoot, scaleName: currentScale, lanes: currentLanes, editCount: currentEditCount, selectAll: currentSelectAll } = settingsRef.current;
+        
+        // Batch all state updates together
+        const updates: Array<{marker: 'L' | 'R', x: number, y: number, targets: number[], pitch: number, pan: number}> = [];
+        
+        // Process both hands simultaneously
         centers.forEach(hand => {
             // Map hand position from video coordinates to stage coordinates
             // Mirror x coordinate since video is mirrored
             const mappedX = stageRect.left + ((videoWidth - hand.x) / videoWidth) * stageRect.width;
             const mappedY = stageRect.top + (hand.y / videoHeight) * stageRect.height;
             
-            // Update position based on hand label
-            if (hand.label === 'left') {
-                updatePitchAt(mappedX, mappedY, 'R'); // Mirrored: left hand controls R marker
-            } else if (hand.label === 'right') {
-                updatePitchAt(mappedX, mappedY, 'L'); // Mirrored: right hand controls L marker
-            }
+            // Calculate pitch and pan for this hand using current settings
+            const { laneIndex, pan } = computePanForX(mappedX, stageRect, currentLanes);
+            const raw = Math.max(21, Math.min(108 - ((mappedY - stageRect.top) / stageRect.height) * 60, 108));
+            const pitch = snapToScale(raw, currentRoot, SCALES[currentScale]);
+            
+            // Each hand controls its own marker and sends its own MIDI
+            const marker = hand.label === 'left' ? 'R' : 'L';
+            const dir: 1 | -1 = marker === 'L' ? 1 : -1;
+            const targets = computeTargetIndicesDirectional(currentLanes, currentEditCount, currentSelectAll, laneIndex, dir);
+            
+            updates.push({
+                marker,
+                x: mappedX - stageRect.left,
+                y: mappedY - stageRect.top,
+                targets,
+                pitch,
+                pan
+            });
         });
-    };
-
-    // Hidden hand tracker for background processing
-    useEffect(() => {
-        if (!useHandTracking) return;
         
-        // This effect will trigger the HandTracker to mount/unmount
-        // The HandTracker is rendered hidden below
-    }, [useHandTracking]);
+        // Apply all updates in a single batch
+        if (updates.length > 0) {
+            // Update marker positions
+            updates.forEach(update => {
+                if (update.marker === 'L') {
+                    setLeft({ x: update.x, y: update.y });
+                } else {
+                    setRight({ x: update.x, y: update.y });
+                }
+            });
+            
+            // Update lane data once
+            setLaneData(prev => {
+                const u = [...prev];
+                updates.forEach(update => {
+                    update.targets.forEach(idx => {
+                        const lane = u[idx] ?? { pitch: 60, pan: 64 };
+                        u[idx] = { ...lane, pitch: update.pitch, pan: update.pan };
+                        setLanePan(idx, update.pan);
+                    });
+                });
+                return u;
+            });
+            
+            // Update highlights
+            const allTargets = updates.flatMap(u => u.targets);
+            markHighlight(allTargets);
+            
+            // Send MIDI for both hands
+            const out = midiRef.current;
+            if (out) {
+                updates.forEach(update => {
+                    update.targets.forEach(idx => {
+                        const ch = Math.min(16, Math.max(MIDI_CHANNEL_BASE, idx + MIDI_CHANNEL_BASE));
+                        const newNote = Math.round(update.pitch);
+                        const prevNote = lastNoteRef.current[idx];
+                        
+                        if (prevNote != null && prevNote !== newNote) {
+                            out.sendNoteOff(ch - 1, prevNote);
+                        }
+                        if (prevNote !== newNote) {
+                            const vel = Math.max(1, Math.min(127, Math.round(20 + 100 * pitchToIntensity(newNote))));
+                            out.sendNote(ch - 1, newNote, vel);
+                            lastNoteRef.current[idx] = newNote;
+                        }
+                        
+                        if (panCacheRef.current[idx] !== update.pan) {
+                            out.sendCC(ch - 1, 10, update.pan);
+                            panCacheRef.current[idx] = update.pan;
+                        }
+                    });
+                });
+            }
+        }
+    };
 
     const onMove = (e: React.PointerEvent) => { if (!dragging || !stageRef.current || useHandTracking) return; updatePitchAt(e.clientX, e.clientY, dragging); };
     const start = (w: 'L' | 'R') => (e: React.PointerEvent) => { if (useHandTracking) return; setDragging(w); updatePitchAt(e.clientX, e.clientY, w); };
