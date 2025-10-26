@@ -47,8 +47,8 @@ function CubeStyles() {
         position: absolute;
         width: 100%;
         height: 100%;
-        background: linear-gradient(100deg, #6366f1, #a855f7);
-        opacity: 0.08;
+        background: linear-gradient(100deg, #a855f7, #caffbf);
+        opacity: 0.8;
         border: 1px solid rgba(255,255,255,0.05);
         border-radius: 8px;
       }

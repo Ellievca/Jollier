@@ -40,7 +40,7 @@ export default function LandingPage() {
               duration: 4,
               ease: easeOutExpo,
             }}
-            className="text-6xl sm:text-7xl font-extralight tracking-widest text-[#5C4A36]"
+            className="text-6xl sm:text-6xl font-extralight tracking-widest text-[#5C4A36]"
           >
             nodal
           </motion.h1>
@@ -63,6 +63,11 @@ export default function LandingPage() {
           >
             <Link
               to="/app"
+              onClick={() => {
+              const audio = new Audio("/assets/startup.wav"); // path to your sound file
+              audio.volume = 0.3; // adjust volume (0.0–1.0)
+              audio.play();
+              }}
               className="inline-flex items-center rounded-xl px-8 py-3 text-base font-medium
                          bg-white text-black shadow
                          transition hover:opacity-90 active:scale-[0.99]
