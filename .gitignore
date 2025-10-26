@@ -22,7 +22,6 @@ node_modules/
 # --- Big assets / generated stuff ---
 assets/sf2/
 *.sf2
-*.wav
 *.mp3
 *.mp4
 *.zip
