@@ -6,7 +6,7 @@ import HandTracker from "./components/HandTracker";
  * Conductor Lane Visualizer with Hand Tracking Support
  */
 
-// ---------------- Helper constants & functions ----------------
+// Helper constants & functions
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] as const;
 const SCALES: Record<string, number[]> = {
     chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
@@ -112,7 +112,7 @@ function StereoVisualizer({ pan = 64 }: { pan?: number }) {
     );
 }
 
-// ---------------- WebAudio (singleton) ----------------
+// WebAudio (singleton) 
 const audioCtxRef: { current: AudioContext | null } =
     (globalThis as any).__audioCtxRef || ((globalThis as any).__audioCtxRef = { current: null } as any);
 function getAudioContext(): AudioContext | null {
@@ -132,7 +132,7 @@ function getAudioContext(): AudioContext | null {
     }
 }
 
-// ---------------- Lane audio buses ----------------
+// Lane audio buses 
 type LaneBus = {
     gain: GainNode;
     panner: StereoPannerNode;
@@ -225,7 +225,7 @@ function playSoftPiano(freq: number, laneIndex: number, pan: number) {
     osc.stop(now + 1.3);
 }
 
-// ---------------- Control-panel visualizers (transparent canvases) ----------------
+// Control-panel visualizers (transparent canvases) 
 function MiniVU({ analyser, width = 90, height = 8 }: { analyser: AnalyserNode; width?: number; height?: number }) {
     const ref = useRef<HTMLCanvasElement | null>(null);
     useEffect(() => {
@@ -308,7 +308,7 @@ function SpectrumBars({ analyser, width = 96, height = 32, bars = 24 }: { analys
     return <canvas ref={canvasRef} width={width} height={height} style={{ display: 'block' }} />;
 }
 
-// ---------------- Lane canvas (physics + labels, NO outlines) ----------------
+// Lane canvas (physics + labels, NO outlines) 
 function LaneCanvasTree({ laneIndex, pitch, pan }: { laneIndex: number; pitch: number; pan: number }) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     type NodeT = { id: number; x: number; y: number; baseX: number; baseY: number; note: string; color: string; createdAt: number; parent: number | null; vx: number; vy: number };
@@ -409,9 +409,9 @@ function LaneCanvasTree({ laneIndex, pitch, pan }: { laneIndex: number; pitch: n
 }
 
 
-// ---------------- Main visualizer with lanes/voices (max 4) ----------------
+// Main visualizer with lanes/voices (max 4) 
 export function ConductorLaneVisualizer() {
-    // --- state & refs ---
+    // state & refs 
     const [lanes, _setLanes] = useState<number>(2);
     const setLanes = (n: number) => _setLanes(Math.max(1, Math.min(4, Number.isFinite(n) ? n : 1)));
 
@@ -738,7 +738,6 @@ export function ConductorLaneVisualizer() {
                 </div>
             </div>
 
-            {/* Hand Tracker - hidden, runs in background */}
             {useHandTracking && (
                 <div style={{ position: 'fixed', top: -10000, left: -10000, pointerEvents: 'none' }}>
                     <HandTracker onHandUpdate={handleHandUpdate} />
@@ -854,7 +853,7 @@ export function ConductorLaneVisualizer() {
     );
 }
 
-// ---------------- App ----------------
+// App 
 export default function App() {
     return (
         <div style={{ width: '100%', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f4ede0' }}>

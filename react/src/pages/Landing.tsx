@@ -8,7 +8,6 @@ const easeOutExpo = [0.16, 1, 0.3, 1] as const;
 export default function LandingPage() {
   const reduce = useReducedMotion();
 
-  // Keyframes for the “fall in” feel (simulate z by rotateX + scale + y)
   const initialTitle = reduce
     ? { opacity: 0 }
     : { opacity: 0, y: -14, scale: 2.2, rotateX: 12, filter: "blur(10px)" };
@@ -20,7 +19,7 @@ export default function LandingPage() {
   return (
     <main className="relative min-h-dvh grid place-items-center overflow-hidden bg-[#f4ede0] text-white">
 
-      {/* 🌐 Background spinning cube */}
+      {/* awesome spinning cube */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 0.25 }}
@@ -65,8 +64,8 @@ export default function LandingPage() {
             <Link
               to="/app"
               onClick={() => {
-              const audio = new Audio("/public/startup.wav"); // path to your sound file
-              audio.volume = 0.3; // adjust volume (0.0–1.0)
+              const audio = new Audio("/public/startup.wav"); 
+              audio.volume = 0.3; 
               audio.play();
               }}
               className="inline-flex items-center rounded-xl px-22 py-3 text-base font-extralight tracking-widest text-[#5C4A36]
