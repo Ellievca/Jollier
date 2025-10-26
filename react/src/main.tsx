@@ -12,12 +12,6 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-<<<<<<< Updated upstream
-    <App />
-  </React.StrictMode>,
-)
-=======
     <RouterProvider router={router} />
   </React.StrictMode>
 );
->>>>>>> Stashed changes
