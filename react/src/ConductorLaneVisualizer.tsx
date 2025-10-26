@@ -625,7 +625,7 @@ export function ConductorLaneVisualizer() {
                         onChange={(e) => setUseHandTracking(e.target.checked)}
                         style={{ cursor: 'pointer' }}
                     />
-                    <span>👋 Hand Tracking</span>
+                    <span>hand tracking</span>
                 </label>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

@@ -19,6 +19,7 @@ export default function LandingPage() {
 
   return (
     <main className="relative min-h-dvh grid place-items-center overflow-hidden bg-[#f4ede0] text-white">
+
       {/* 🌐 Background spinning cube */}
       <motion.div
         initial={{ opacity: 0 }}
@@ -27,7 +28,7 @@ export default function LandingPage() {
         className="absolute inset-0 flex items-center justify-center pointer-events-none"
       >
         <SpinningCube />
-      </motion.div>
+      </motion.div>      
 
       {/* Foreground content */}
       <div style={{ perspective: 1200 }} className="relative z-10">
@@ -68,12 +69,11 @@ export default function LandingPage() {
               audio.volume = 0.3; // adjust volume (0.0–1.0)
               audio.play();
               }}
-              className="inline-flex items-center rounded-xl px-8 py-3 text-base font-medium
-                         bg-white text-black shadow
-                         transition hover:opacity-90 active:scale-[0.99]
-                         focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+              className="inline-flex items-center rounded-xl px-22 py-3 text-base font-extralight tracking-widest text-[#5C4A36]
+                         transition hover:opacity-70 active:scale-[0.99]
+                         "
             >
-              Start
+              start
             </Link>
           </motion.div>
         </div>
