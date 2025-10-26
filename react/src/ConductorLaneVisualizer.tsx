@@ -3,10 +3,102 @@ import { initWebMIDI } from "./utils/webmidi";
 import HandTracker from "./components/HandTracker";
 
 /**
- * Conductor Lane Visualizer with Hand Tracking Support
+ * Conductor Lane Visualizer with Hand Tracking & Dark Mode Support
  */
 
-// Helper constants & functions
+// ============================================================
+// 🎨 COLOR PALETTE CONFIGURATION
+// ============================================================
+const COLORS = {
+    light: {
+        // Main backgrounds
+        appBackground: '#f4ede0',
+        containerBackground: '#f4ede0',
+        
+        // Text colors
+        textPrimary: '#2b241c',
+        textSecondary: '#2b241c',
+        
+        // Borders
+        borderPrimary: '#5C4A36',
+        borderSecondary: 'rgba(92,74,54,0.2)',
+        
+        // Controls (buttons, selects, inputs)
+        controlBackground: 'rgba(255,255,255,0.35)',
+        controlBorder: '#5C4A36',
+        selectBackground: 'white',
+        
+        // Active states
+        activeBackground: 'rgba(186,240,207,0.7)',
+        activeBackgroundAlt: 'rgba(74, 158, 255, 0.2)',
+        
+        // Lane highlights
+        laneHighlight: 'rgba(186,240,207,{alpha})',
+        laneGlow: 'rgba(138, 212, 170, {alpha})',
+        
+        // Markers
+        markerL: '#e7d9be',
+        markerR: '#f0dcc2',
+        
+        // Visualizer elements
+        waveColor: 'rgba(43,36,28,0.45)',
+        vuColor: 'rgba(138,212,170,0.85)',
+        spectrumLow: 'rgba(186,240,207,{alpha})',
+        spectrumHigh: 'rgba(138,212,170,{alpha})',
+        
+        // Lane info panel
+        panelCorners: '#2b241c',
+        
+        // Node colors (pastel)
+        nodeColors: ["#ffd6a5", "#fdffb6", "#caffbf", "#9bf6ff"],
+    },
+    dark: {
+        // Main backgrounds
+        appBackground: '#0f0f0f',
+        containerBackground: '#1a1a1a',
+        
+        // Text colors
+        textPrimary: '#e0e0e0',
+        textSecondary: '#b0b0b0',
+        
+        // Borders
+        borderPrimary: '#404040',
+        borderSecondary: 'rgba(64,64,64,0.3)',
+        
+        // Controls (buttons, selects, inputs)
+        controlBackground: 'rgba(255,255,255,0.1)',
+        controlBorder: '#404040',
+        selectBackground: '#2a2a2a',
+        
+        // Active states - MORE MUTED in dark mode
+        activeBackground: 'rgba(80,130,100,0.35)',
+        activeBackgroundAlt: 'rgba(74, 158, 255, 0.25)',
+        
+        // Lane highlights - MORE MUTED, DARKER in dark mode
+        laneHighlight: 'rgba(70,100,80,{alpha})',
+        laneGlow: 'rgba(80,130,100,{alpha})',
+        
+        // Markers
+        markerL: '#3a3a3a',
+        markerR: '#454545',
+        
+        // Visualizer elements
+        waveColor: 'rgba(224,224,224,0.45)',
+        vuColor: 'rgba(100,150,120,0.75)',
+        spectrumLow: 'rgba(80,120,100,{alpha})',
+        spectrumHigh: 'rgba(100,150,120,{alpha})',
+        
+        // Lane info panel
+        panelCorners: '#e0e0e0',
+        
+        // Node colors - DARKER, MORE MUTED for dark mode
+        nodeColors: ["#8b7355", "#9a9a6b", "#6b9a7f", "#5f8a8a"],
+    }
+};
+
+// ============================================================
+// HELPER FUNCTIONS
+// ============================================================
 const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"] as const;
 const SCALES: Record<string, number[]> = {
     chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
@@ -65,33 +157,40 @@ function computeTargetIndicesDirectional(
     return out.sort((a, b) => a - b);
 }
 
-// ---------------- Dev tests (non-fatal) ----------------
-(() => {
-    try {
-        if (typeof window !== 'undefined') {
-            const rect: any = { left: 0, top: 0, width: 400, height: 200, right: 400, bottom: 200, x: 0, y: 0, toJSON() { return {} } };
-            const a = computePanForX(-10, rect as DOMRect, 4);
-            const b = computePanForX(410, rect as DOMRect, 4);
-            const c = computePanForX(200, rect as DOMRect, 4);
-            console.assert(a.laneIndex >= 0 && a.laneIndex < 4, 'laneIndex clamp left');
-            console.assert(b.laneIndex >= 0 && b.laneIndex < 4, 'laneIndex clamp right');
-            console.assert(c.pan >= 0 && c.pan <= 127, 'pan range 0..127');
-            console.assert(midiToNote(60) === 'c4', 'midiToNote(60) -> c4');
-            console.assert(midiToNote(69) === 'a4', 'midiToNote(69) -> a4');
-            const s = snapToScale(61, 0, SCALES.major);
-            console.assert([60, 62].includes(s), 'snapToScale around C major');
-            const dirR = computeTargetIndicesDirectional(4, 2, false, 1, 1);
-            const dirL = computeTargetIndicesDirectional(4, 2, false, 2, -1);
-            console.assert(JSON.stringify(dirR) === JSON.stringify([1, 2]), 'dir +1 contiguous');
-            console.assert(JSON.stringify(dirL) === JSON.stringify([1, 2]), 'dir -1 contiguous');
-            console.assert(computeTargetIndicesDirectional(4, 2, true, 2, 1).length === 4, 'selectAll returns all');
-            console.assert(JSON.stringify(computeTargetIndicesDirectional(1, 3, false, 0, 1)) === JSON.stringify([0]), 'single lane clamp ok');
-        }
-    } catch {/* non-fatal */ }
-})();
+// ============================================================
+// DARK MODE HOOK (SIMPLIFIED)
+// ============================================================
+function useDarkMode() {
+    const [isDark, setIsDark] = useState(false);
 
-// ---------------- Ozone-style mini stereo visualizer ----------------
-function StereoVisualizer({ pan = 64 }: { pan?: number }) {
+    useEffect(() => {
+        const stored = localStorage.getItem('darkMode');
+        if (stored === 'true') {
+            setIsDark(true);
+            document.documentElement.classList.add('dark');
+        }
+    }, []);
+
+    const toggleDarkMode = () => {
+        setIsDark(prev => {
+            const newValue = !prev;
+            localStorage.setItem('darkMode', String(newValue));
+            if (newValue) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+            return newValue;
+        });
+    };
+
+    return { isDark, toggleDarkMode };
+}
+
+// ============================================================
+// STEREO VISUALIZER
+// ============================================================
+function StereoVisualizer({ pan = 64, isDark = false }: { pan?: number; isDark?: boolean }) {
     const intensity = Math.min(1, Math.abs(pan - 64) / 64);
     const panNorm = Math.max(-1, Math.min(1, (pan - 64) / 64));
     const { pathA, pathB, pathC } = useMemo(() => {
@@ -100,19 +199,24 @@ function StereoVisualizer({ pan = 64 }: { pan?: number }) {
         return { pathA: gen(A, B, ph), pathB: gen(A * 0.75, C, ph + Math.PI / 3), pathC: gen(A * 0.5, B * 0.6, ph + Math.PI / 1.7) };
     }, [intensity, panNorm]);
     const dots = useMemo(() => Array.from({ length: 24 }).map(() => ({ x: 50 + (Math.random() - 0.5) * 60 * (panNorm * 2), y: 50 + (Math.random() - 0.5) * 50, opacity: 0.5 + Math.random() * 0.4 })), [panNorm]);
+    
+    const strokeColor = isDark ? COLORS.dark.textSecondary : COLORS.light.textPrimary;
+    
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', fontSize: 8, color: '#2b241c' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', fontSize: 8 }}>
             <svg width={140} height={40} viewBox="0 0 100 100">
-                <path d={pathA} fill="none" stroke="#2b241c" strokeWidth={0.7} opacity={0.35} />
-                <path d={pathB} fill="none" stroke="#2b241c" strokeWidth={0.5} opacity={0.3} />
-                <path d={pathC} fill="none" stroke="#2b241c" strokeWidth={0.4} opacity={0.25} />
-                {dots.map((d, i) => (<circle key={i} cx={d.x} cy={d.y} r={1.2} fill="black" opacity={d.opacity} />))}
+                <path d={pathA} fill="none" stroke={strokeColor} strokeWidth={0.7} opacity={0.35} />
+                <path d={pathB} fill="none" stroke={strokeColor} strokeWidth={0.5} opacity={0.3} />
+                <path d={pathC} fill="none" stroke={strokeColor} strokeWidth={0.4} opacity={0.25} />
+                {dots.map((d, i) => (<circle key={i} cx={d.x} cy={d.y} r={1.2} fill={strokeColor} opacity={d.opacity} />))}
             </svg>
         </div>
     );
 }
 
-// WebAudio (singleton) 
+// ============================================================
+// WEB AUDIO SETUP
+// ============================================================
 const audioCtxRef: { current: AudioContext | null } =
     (globalThis as any).__audioCtxRef || ((globalThis as any).__audioCtxRef = { current: null } as any);
 function getAudioContext(): AudioContext | null {
@@ -132,7 +236,6 @@ function getAudioContext(): AudioContext | null {
     }
 }
 
-// Lane audio buses 
 type LaneBus = {
     gain: GainNode;
     panner: StereoPannerNode;
@@ -225,8 +328,10 @@ function playSoftPiano(freq: number, laneIndex: number, pan: number) {
     osc.stop(now + 1.3);
 }
 
-// Control-panel visualizers (transparent canvases) 
-function MiniVU({ analyser, width = 90, height = 8 }: { analyser: AnalyserNode; width?: number; height?: number }) {
+// ============================================================
+// VISUALIZER COMPONENTS
+// ============================================================
+function MiniVU({ analyser, width = 90, height = 8, isDark = false }: { analyser: AnalyserNode; width?: number; height?: number; isDark?: boolean }) {
     const ref = useRef<HTMLCanvasElement | null>(null);
     useEffect(() => {
         if (!analyser || !ref.current) return;
@@ -239,17 +344,17 @@ function MiniVU({ analyser, width = 90, height = 8 }: { analyser: AnalyserNode; 
             ctx.clearRect(0, 0, width, height);
             let sum = 0; for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
             const rms = Math.sqrt(sum / buf.length);
-            ctx.fillStyle = 'rgba(138,212,170,0.85)';
+            ctx.fillStyle = isDark ? COLORS.dark.vuColor : COLORS.light.vuColor;
             ctx.fillRect(0, 0, width * Math.min(1, rms * 1.8), height);
             raf = requestAnimationFrame(loop);
         };
         raf = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(raf);
-    }, [analyser, width, height]);
+    }, [analyser, width, height, isDark]);
     return <canvas ref={ref} width={width} height={height} style={{ display: 'block', borderRadius: 4 }} />;
 }
 
-function OscilloscopeMini({ analyser, width = 120, height = 32 }: { analyser: AnalyserNode; width?: number; height?: number }) {
+function OscilloscopeMini({ analyser, width = 120, height = 32, isDark = false }: { analyser: AnalyserNode; width?: number; height?: number; isDark?: boolean }) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     useEffect(() => {
         const cvs = canvasRef.current; if (!cvs || !analyser) return;
@@ -260,7 +365,7 @@ function OscilloscopeMini({ analyser, width = 120, height = 32 }: { analyser: An
             analyser.getByteTimeDomainData(buf);
             ctx.clearRect(0, 0, width, height);
             ctx.lineWidth = 1;
-            ctx.strokeStyle = 'rgba(43,36,28,0.45)';
+            ctx.strokeStyle = isDark ? COLORS.dark.waveColor : COLORS.light.waveColor;
             ctx.beginPath();
             for (let i = 0; i < buf.length; i++) {
                 const x = (i / (buf.length - 1)) * width;
@@ -272,11 +377,11 @@ function OscilloscopeMini({ analyser, width = 120, height = 32 }: { analyser: An
         };
         raf = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(raf);
-    }, [analyser, width, height]);
+    }, [analyser, width, height, isDark]);
     return <canvas ref={canvasRef} width={width} height={height} style={{ display: 'block' }} />;
 }
 
-function SpectrumBars({ analyser, width = 96, height = 32, bars = 24 }: { analyser: AnalyserNode; width?: number; height?: number; bars?: number }) {
+function SpectrumBars({ analyser, width = 96, height = 32, bars = 24, isDark = false }: { analyser: AnalyserNode; width?: number; height?: number; bars?: number; isDark?: boolean }) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     useEffect(() => {
         const cvs = canvasRef.current; if (!cvs || !analyser) return;
@@ -297,28 +402,32 @@ function SpectrumBars({ analyser, width = 96, height = 32, bars = 24 }: { analys
                 const x = i * barW;
                 const alpha = 0.65;
                 const low = i < 2;
-                ctx.fillStyle = low ? `rgba(186,240,207,${alpha})` : `rgba(138,212,170,${alpha})`;
+                const lowColor = isDark ? COLORS.dark.spectrumLow : COLORS.light.spectrumLow;
+                const highColor = isDark ? COLORS.dark.spectrumHigh : COLORS.light.spectrumHigh;
+                ctx.fillStyle = low ? lowColor.replace('{alpha}', String(alpha)) : highColor.replace('{alpha}', String(alpha));
                 ctx.fillRect(x, height - h, barW * 0.78, h);
             }
             raf = requestAnimationFrame(loop);
         };
         raf = requestAnimationFrame(loop);
         return () => cancelAnimationFrame(raf);
-    }, [analyser, width, height, bars]);
+    }, [analyser, width, height, bars, isDark]);
     return <canvas ref={canvasRef} width={width} height={height} style={{ display: 'block' }} />;
 }
 
-// Lane canvas (physics + labels, NO outlines) 
-function LaneCanvasTree({ laneIndex, pitch, pan }: { laneIndex: number; pitch: number; pan: number }) {
+// ============================================================
+// LANE CANVAS (TREE VISUALIZATION)
+// ============================================================
+function LaneCanvasTree({ laneIndex, pitch, pan, isDark = false }: { laneIndex: number; pitch: number; pan: number; isDark?: boolean }) {
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
-    type NodeT = { id: number; x: number; y: number; baseX: number; baseY: number; note: string; color: string; createdAt: number; parent: number | null; vx: number; vy: number };
+    type NodeT = { id: number; x: number; y: number; baseX: number; baseY: number; note: string; colorIndex: number; createdAt: number; parent: number | null; vx: number; vy: number };
     const nodesRef = useRef<NodeT[]>([]);
     const nextIdRef = useRef(0);
     const lastSnapRef = useRef(Math.round(pitch));
     const lastSpawnRef = useRef(0);
     const rafRef = useRef<number | undefined>(undefined);
 
-    const colors = ["#ffd6a5", "#fdffb6", "#caffbf", "#9bf6ff"];
+    const colors = isDark ? COLORS.dark.nodeColors : COLORS.light.nodeColors;
 
     const yFromMidi = (m: number, H: number) => { const min = 36, max = 96; const t = Math.max(0, Math.min(1, (m - min) / (max - min))); return (1 - t) * (H * 0.75) + (H * 0.1); };
     const xFromPan = (p: number, W: number) => { const t = Math.max(0, Math.min(1, p / 127)); return (W * 0.1) + t * (W * 0.8); };
@@ -341,9 +450,10 @@ function LaneCanvasTree({ laneIndex, pitch, pan }: { laneIndex: number; pitch: n
         const x = xFromPan(pan, W), y = yFromMidi(snap, H);
         const id = nextIdRef.current++;
         const parent = nodesRef.current.length ? nodesRef.current[nodesRef.current.length - 1].id : null;
-        nodesRef.current.push({ id, x, y, baseX: x, baseY: y, note: midiToNote(snap).toUpperCase(), color: colors[id % colors.length], createdAt: now, parent, vx: (Math.random() - 0.5) * 0.9, vy: (Math.random() - 0.5) * 0.9 });
+        const colorIndex = id % colors.length;
+        nodesRef.current.push({ id, x, y, baseX: x, baseY: y, note: midiToNote(snap).toUpperCase(), colorIndex, createdAt: now, parent, vx: (Math.random() - 0.5) * 0.9, vy: (Math.random() - 0.5) * 0.9 });
         if (PREVIEW_TONE) playSoftPiano(midiToFreq(snap), laneIndex, pan); lastSpawnRef.current = now; lastSnapRef.current = snap;
-    }, [pitch, pan, laneIndex]);
+    }, [pitch, pan, laneIndex, colors.length]);
 
     useEffect(() => {
         const cvs = canvasRef.current; if (!cvs) return; const ctx = cvs.getContext('2d'); if (!ctx) return;
@@ -365,17 +475,22 @@ function LaneCanvasTree({ laneIndex, pitch, pan }: { laneIndex: number; pitch: n
                 n.x += (anchorX - n.x) * influence; n.y += (anchorY - n.y) * influence;
             });
 
+            const lineColor = isDark ? COLORS.dark.textSecondary : COLORS.light.textPrimary;
+            const textColor = isDark ? COLORS.dark.textPrimary : COLORS.light.textPrimary;
+
             nodesRef.current.forEach(n => {
                 if (n.parent == null) return; const p = nodesRef.current.find(m => m.id === n.parent); if (!p) return;
                 const op = Math.max(0, 1 - (now - n.createdAt) / fadeTime) * 0.35;
-                ctx.strokeStyle = `rgba(43,36,28,${op})`; ctx.lineWidth = 2.0 * (cvs.width / 800);
+                ctx.strokeStyle = lineColor.replace(/[\d.]+\)$/, `${op})`);
+                ctx.lineWidth = 2.0 * (cvs.width / 800);
                 ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(n.x, n.y); ctx.stroke();
             });
 
             nodesRef.current.forEach(n => {
                 const op = Math.max(0, 1 - (now - n.createdAt) / fadeTime);
                 const R = 24 * (cvs.width / 800);
-                const hex = n.color;
+                // Get the current color from the current theme's color palette using the stored colorIndex
+                const hex = colors[n.colorIndex % colors.length];
                 const r = parseInt(hex.slice(1, 3), 16);
                 const g = parseInt(hex.slice(3, 5), 16);
                 const b = parseInt(hex.slice(5, 7), 16);
@@ -390,7 +505,7 @@ function LaneCanvasTree({ laneIndex, pitch, pan }: { laneIndex: number; pitch: n
                 ctx.fillStyle = `rgba(${r},${g},${b},${(op * 0.95).toFixed(3)})`;
                 ctx.fill();
 
-                ctx.fillStyle = `rgba(43,36,28,${(0.85 * op).toFixed(3)})`;
+                ctx.fillStyle = textColor.replace(/[\d.]+\)$/, `${(0.85 * op).toFixed(3)})`);
                 ctx.font = `${12 * (cvs.width / 800)}px ui-monospace, Menlo, monospace`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
@@ -403,15 +518,18 @@ function LaneCanvasTree({ laneIndex, pitch, pan }: { laneIndex: number; pitch: n
         };
         rafRef.current = requestAnimationFrame(loop);
         return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-    }, [pitch, pan]);
+    }, [pitch, pan, isDark, colors]);
 
     return <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} />;
 }
 
-
-// Main visualizer with lanes/voices (max 4) 
+// ============================================================
+// MAIN VISUALIZER COMPONENT
+// ============================================================
 export function ConductorLaneVisualizer() {
-    // state & refs 
+    const { isDark, toggleDarkMode } = useDarkMode();
+    const palette = isDark ? COLORS.dark : COLORS.light;
+
     const [lanes, _setLanes] = useState<number>(2);
     const setLanes = (n: number) => _setLanes(Math.max(1, Math.min(4, Number.isFinite(n) ? n : 1)));
 
@@ -425,28 +543,23 @@ export function ConductorLaneVisualizer() {
     const [right, setRight] = useState({ x: 480, y: 200 });
     const [dragging, setDragging] = useState<null | 'L' | 'R'>(null);
 
-    // Hand tracking state
     const [useHandTracking, setUseHandTracking] = useState(false);
 
-    // MIDI env + note memory / throttle / pan cache
     const midiRef = useRef<Awaited<ReturnType<typeof initWebMIDI>> | null>(null);
     const lastNoteRef = useRef<(number | undefined)[]>([]);
     const lastSendMsRef = useRef(0);
     const panCacheRef = useRef<Record<number, number>>({});
 
-    // Refs to hold current settings for hand tracking (avoid stale closure values)
     const settingsRef = useRef({ rootPc, scaleName, lanes, editCount, selectAll });
     useEffect(() => {
         settingsRef.current = { rootPc, scaleName, lanes, editCount, selectAll };
     }, [rootPc, scaleName, lanes, editCount, selectAll]);
 
-    // Highlight fade tracking
     const FADE_MS = 900;
     const [highlightAt, setHighlightAt] = useState<number[]>(() => Array.from({ length: 2 }, () => 0));
     const [tick, setTick] = useState(0);
     useEffect(() => { let raf: number; const loop = () => { setTick(t => t + 1); raf = requestAnimationFrame(loop); }; raf = requestAnimationFrame(loop); return () => cancelAnimationFrame(raf); }, []);
 
-    // keep arrays in sync with lane count
     useEffect(() => {
         setLaneData(prev => { const next = prev.slice(0, lanes); while (next.length < lanes) next.push({ pitch: 60, pan: 64 }); return next; });
         setHighlightAt(prev => { const next = prev.slice(0, lanes); while (next.length < lanes) next.push(0); return next; });
@@ -455,7 +568,6 @@ export function ConductorLaneVisualizer() {
 
     useEffect(() => { laneData.forEach((ld, i) => setLanePan(i, ld.pan)); }, [laneData]);
 
-    // Initialize MIDI (pick IN and OUT once) + attach listeners
     useEffect(() => {
         let mounted = true;
         let offNote = () => { };
@@ -552,12 +664,10 @@ export function ConductorLaneVisualizer() {
         if (w === 'L') { setLeft({ x: x - r.left, y: y - r.top }); } else { setRight({ x: x - r.left, y: y - r.top }); }
     };
 
-    // Hand tracking handler - throttled and batched updates
     const lastHandUpdateRef = useRef(0);
     const handleHandUpdate = (centers: Array<{x: number, y: number, label: string}>) => {
         if (!stageRef.current || !useHandTracking) return;
         
-        // Throttle updates to reduce re-render frequency (30fps max)
         const now = performance.now();
         if (now - lastHandUpdateRef.current < 33) return;
         lastHandUpdateRef.current = now;
@@ -566,25 +676,18 @@ export function ConductorLaneVisualizer() {
         const videoWidth = 640;
         const videoHeight = 480;
         
-        // Get current settings from ref to avoid stale closure values
         const { rootPc: currentRoot, scaleName: currentScale, lanes: currentLanes, editCount: currentEditCount, selectAll: currentSelectAll } = settingsRef.current;
         
-        // Batch all state updates together
         const updates: Array<{marker: 'L' | 'R', x: number, y: number, targets: number[], pitch: number, pan: number}> = [];
         
-        // Process both hands simultaneously
         centers.forEach(hand => {
-            // Map hand position from video coordinates to stage coordinates
-            // Mirror x coordinate since video is mirrored
             const mappedX = stageRect.left + ((videoWidth - hand.x) / videoWidth) * stageRect.width;
             const mappedY = stageRect.top + (hand.y / videoHeight) * stageRect.height;
             
-            // Calculate pitch and pan for this hand using current settings
             const { laneIndex, pan } = computePanForX(mappedX, stageRect, currentLanes);
             const raw = Math.max(21, Math.min(108 - ((mappedY - stageRect.top) / stageRect.height) * 60, 108));
             const pitch = snapToScale(raw, currentRoot, SCALES[currentScale]);
             
-            // Each hand controls its own marker and sends its own MIDI
             const marker = hand.label === 'left' ? 'R' : 'L';
             const dir: 1 | -1 = marker === 'L' ? 1 : -1;
             const targets = computeTargetIndicesDirectional(currentLanes, currentEditCount, currentSelectAll, laneIndex, dir);
@@ -599,9 +702,7 @@ export function ConductorLaneVisualizer() {
             });
         });
         
-        // Apply all updates in a single batch
         if (updates.length > 0) {
-            // Update marker positions
             updates.forEach(update => {
                 if (update.marker === 'L') {
                     setLeft({ x: update.x, y: update.y });
@@ -610,7 +711,6 @@ export function ConductorLaneVisualizer() {
                 }
             });
             
-            // Update lane data once
             setLaneData(prev => {
                 const u = [...prev];
                 updates.forEach(update => {
@@ -623,11 +723,9 @@ export function ConductorLaneVisualizer() {
                 return u;
             });
             
-            // Update highlights
             const allTargets = updates.flatMap(u => u.targets);
             markHighlight(allTargets);
             
-            // Send MIDI for both hands
             const out = midiRef.current;
             if (out) {
                 updates.forEach(update => {
@@ -685,57 +783,161 @@ export function ConductorLaneVisualizer() {
         };
     }, [lanes]);
 
-    const containerStyle: React.CSSProperties = { width: '100%', minHeight: 620, background: '#f4ede0', color: '#2b241c', padding: 18, boxSizing: 'border-box', fontFamily: 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto' };
-    const stageStyle: React.CSSProperties = { position: 'relative', width: '100%', aspectRatio: '16/8', border: '2px solid #5C4A36', borderRadius: 18, overflow: 'hidden' };
+    const containerStyle: React.CSSProperties = { 
+        width: '100%', 
+        minHeight: 620, 
+        background: palette.containerBackground, 
+        color: palette.textPrimary, 
+        padding: 18, 
+        boxSizing: 'border-box', 
+        fontFamily: 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto',
+        transition: 'background-color 0.2s, color 0.2s'
+    };
+    const stageStyle: React.CSSProperties = { 
+        position: 'relative', 
+        width: '100%', 
+        aspectRatio: '16/8', 
+        border: `2px solid ${palette.borderPrimary}`, 
+        borderRadius: 18, 
+        overflow: 'hidden',
+        transition: 'border-color 0.2s'
+    };
 
     const laneAlpha = (i: number) => { const t = highlightAt[i] || 0; if (!t) return 0; const dt = Date.now() - t; return Math.max(0, Math.min(1, 1 - dt / FADE_MS)); };
 
     return (
         <div style={containerStyle}>
-            <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.4 }}>lane mode</div>
+            <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.4 }}>lane mode</div>
                 
-                {/* Hand Tracking Toggle */}
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600, padding: '6px 12px', background: useHandTracking ? 'rgba(74, 158, 255, 0.2)' : 'rgba(255, 255, 255, 0.35)', borderRadius: 999, border: '1px solid #5C4A36', cursor: 'pointer', userSelect: 'none' }}>
-                    <input 
-                        type="checkbox" 
-                        checked={useHandTracking} 
-                        onChange={(e) => setUseHandTracking(e.target.checked)}
-                        style={{ cursor: 'pointer' }}
-                    />
-                    <span>hand tracking</span>
-                </label>
+                    <label style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: 8, 
+                        fontSize: 12, 
+                        fontWeight: 600, 
+                        padding: '6px 12px', 
+                        background: useHandTracking ? palette.activeBackgroundAlt : palette.controlBackground, 
+                        borderRadius: 999, 
+                        border: `1px solid ${palette.controlBorder}`, 
+                        cursor: 'pointer', 
+                        userSelect: 'none', 
+                        transition: 'all 0.2s' 
+                    }}>
+                        <input 
+                            type="checkbox" 
+                            checked={useHandTracking} 
+                            onChange={(e) => setUseHandTracking(e.target.checked)}
+                            style={{ cursor: 'pointer' }}
+                        />
+                        <span>hand tracking</span>
+                    </label>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ fontSize: 12, opacity: 0.8 }}>voices</div>
-                    <select value={String(lanes)} onChange={(e) => setLanes(parseInt(e.target.value))} style={{ height: 26, padding: '0 8px' }}>
-                        {[1, 2, 3, 4].map(n => <option key={n} value={String(n)}>{n}</option>)}
-                    </select>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontSize: 12, opacity: 0.8 }}>voices</div>
+                        <select 
+                            value={String(lanes)} 
+                            onChange={(e) => setLanes(parseInt(e.target.value))} 
+                            style={{ 
+                                height: 26, 
+                                padding: '0 8px', 
+                                background: palette.selectBackground, 
+                                color: palette.textPrimary, 
+                                border: `1px solid ${palette.controlBorder}`, 
+                                borderRadius: 4, 
+                                transition: 'all 0.2s' 
+                            }}
+                        >
+                            {[1, 2, 3, 4].map(n => <option key={n} value={String(n)}>{n}</option>)}
+                        </select>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontSize: 12, opacity: 0.8 }}>root</div>
+                        <select 
+                            value={String(rootPc)} 
+                            onChange={(e) => setRootPc(parseInt(e.target.value))} 
+                            style={{ 
+                                height: 26, 
+                                padding: '0 8px', 
+                                background: palette.selectBackground, 
+                                color: palette.textPrimary, 
+                                border: `1px solid ${palette.controlBorder}`, 
+                                borderRadius: 4, 
+                                transition: 'all 0.2s' 
+                            }}
+                        >
+                            {NOTE_NAMES.map((n, i) => (<option key={i} value={String(i)}>{n}</option>))}
+                        </select>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontSize: 12, opacity: 0.8 }}>scale</div>
+                        <select 
+                            value={String(scaleName)} 
+                            onChange={(e) => setScaleName(e.target.value as keyof typeof SCALES)} 
+                            style={{ 
+                                height: 26, 
+                                padding: '0 8px', 
+                                background: palette.selectBackground, 
+                                color: palette.textPrimary, 
+                                border: `1px solid ${palette.controlBorder}`, 
+                                borderRadius: 4, 
+                                transition: 'all 0.2s' 
+                            }}
+                        >
+                            {Object.keys(SCALES).map(k => (<option key={k} value={k}>{k}</option>))}
+                        </select>
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, opacity: 0.8, userSelect: 'none' }}>
+                        <input type="checkbox" checked={selectAll} onChange={(e) => setSelectAll(e.target.checked)} /> select all
+                    </label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontSize: 12, opacity: 0.8 }}>edit lanes</span>
+                        {Array.from({ length: Math.min(4, lanes) }).map((_, i) => {
+                            const n = i + 1; const active = editCount === n;
+                            return (
+                                <button 
+                                    key={n} 
+                                    onClick={() => setEditCount(n)} 
+                                    style={{ 
+                                        height: 26, 
+                                        padding: '0 10px', 
+                                        border: `1px solid ${palette.controlBorder}`, 
+                                        borderRadius: 999, 
+                                        background: active ? palette.activeBackground : palette.controlBackground, 
+                                        transition: 'all 0.2s', 
+                                        cursor: 'pointer',
+                                        color: palette.textPrimary
+                                    }}
+                                >
+                                    {n}
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ fontSize: 12, opacity: 0.8 }}>root</div>
-                    <select value={String(rootPc)} onChange={(e) => setRootPc(parseInt(e.target.value))} style={{ height: 26, padding: '0 8px' }}>
-                        {NOTE_NAMES.map((n, i) => (<option key={i} value={String(i)}>{n}</option>))}
-                    </select>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ fontSize: 12, opacity: 0.8 }}>scale</div>
-                    <select value={String(scaleName)} onChange={(e) => setScaleName(e.target.value as keyof typeof SCALES)} style={{ height: 26, padding: '0 8px' }}>
-                        {Object.keys(SCALES).map(k => (<option key={k} value={k}>{k}</option>))}
-                    </select>
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, opacity: 0.8, userSelect: 'none' }}>
-                    <input type="checkbox" checked={selectAll} onChange={(e) => setSelectAll(e.target.checked)} /> select all
-                </label>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ fontSize: 12, opacity: 0.8 }}>edit lanes</span>
-                    {Array.from({ length: Math.min(4, lanes) }).map((_, i) => {
-                        const n = i + 1; const active = editCount === n;
-                        return (
-                            <button key={n} onClick={() => setEditCount(n)} style={{ height: 26, padding: '0 10px', border: '1px solid #5C4A36', borderRadius: 999, background: active ? 'rgba(186,240,207,0.7)' : 'rgba(255,255,255,0.35)' }}>{n}</button>
-                        );
-                    })}
-                </div>
+
+                {/* Simple Dark Mode Toggle */}
+                <button
+                    onClick={toggleDarkMode}
+                    style={{
+                        height: 32,
+                        width: 32,
+                        padding: 0,
+                        border: `1px solid ${palette.controlBorder}`,
+                        borderRadius: 999,
+                        background: palette.controlBackground,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 16,
+                        transition: 'all 0.2s'
+                    }}
+                    title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+                >
+                    {isDark ? '☀️' : '🌙'}
+                </button>
             </div>
 
             {useHandTracking && (
@@ -750,41 +952,42 @@ export function ConductorLaneVisualizer() {
                     const alpha = laneAlpha(i);
                     const baseAlpha = 0.28 + pitchToIntensity(lane.pitch) * 0.22;
                     const bgAlpha = baseAlpha * alpha;
-                    const glow = alpha > 0 ? `inset 0 0 0 2px rgba(138, 212, 170, ${0.55 * alpha}), 0 0 ${18 * alpha}px rgba(186, 240, 207, ${0.55 * alpha})` : 'none';
+                    const glow = alpha > 0 ? `inset 0 0 0 2px ${palette.laneGlow.replace('{alpha}', String(0.55 * alpha))}, 0 0 ${18 * alpha}px ${palette.laneGlow.replace('{alpha}', String(0.55 * alpha))}` : 'none';
                     const laneStyle: React.CSSProperties = {
                         position: 'absolute', top: 0, bottom: 0, left: `${(i * 100) / lanes}%`, width: `${100 / lanes}%`, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
-                        borderRight: i !== lanes - 1 ? '1px solid #5C4A36' : 'none',
-                        background: alpha > 0 ? `rgba(186,240,207,${bgAlpha})` : undefined,
-                        boxShadow: glow
+                        borderRight: i !== lanes - 1 ? `1px solid ${palette.borderPrimary}` : 'none',
+                        background: alpha > 0 ? palette.laneHighlight.replace('{alpha}', String(bgAlpha)) : undefined,
+                        boxShadow: glow,
+                        transition: 'background 0.2s, border-color 0.2s'
                     };
                     const analysers = getLaneAnalysers(i);
                     return (
                         <div key={i} style={laneStyle}>
-                            <LaneCanvasTree laneIndex={i} pitch={lane.pitch} pan={lane.pan} />
+                            <LaneCanvasTree laneIndex={i} pitch={lane.pitch} pan={lane.pan} isDark={isDark} />
                             <div style={{ position: 'relative', margin: '8px auto', width: '88%', maxWidth: 520, textAlign: 'center', fontSize: 9, fontWeight: 600, pointerEvents: 'none', background: 'transparent', padding: '6px 18px', boxSizing: 'border-box', overflow: 'hidden', borderRadius: 10 }}>
                                 <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-                                    <div style={{ position: 'absolute', top: 0, left: 0, width: 16, height: 2, background: '#2b241c', opacity: 0.35 }} />
-                                    <div style={{ position: 'absolute', top: 0, left: 0, width: 2, height: 16, background: '#2b241c', opacity: 0.35 }} />
-                                    <div style={{ position: 'absolute', top: 0, right: 0, width: 16, height: 2, background: '#2b241c', opacity: 0.35 }} />
-                                    <div style={{ position: 'absolute', top: 0, right: 0, width: 2, height: 16, background: '#2b241c', opacity: 0.35 }} />
-                                    <div style={{ position: 'absolute', bottom: 0, left: 0, width: 16, height: 2, background: '#2b241c', opacity: 0.35 }} />
-                                    <div style={{ position: 'absolute', bottom: 0, left: 0, width: 2, height: 16, background: '#2b241c', opacity: 0.35 }} />
-                                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: 16, height: 2, background: '#2b241c', opacity: 0.35 }} />
-                                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: 2, height: 16, background: '#2b241c', opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', top: 0, left: 0, width: 16, height: 2, background: palette.panelCorners, opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', top: 0, left: 0, width: 2, height: 16, background: palette.panelCorners, opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', top: 0, right: 0, width: 16, height: 2, background: palette.panelCorners, opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', top: 0, right: 0, width: 2, height: 16, background: palette.panelCorners, opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', bottom: 0, left: 0, width: 16, height: 2, background: palette.panelCorners, opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', bottom: 0, left: 0, width: 2, height: 16, background: palette.panelCorners, opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: 16, height: 2, background: palette.panelCorners, opacity: 0.35 }} />
+                                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: 2, height: 16, background: palette.panelCorners, opacity: 0.35 }} />
                                 </div>
 
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 0 }}>
-                                        <StereoVisualizer pan={lane.pan} />
+                                        <StereoVisualizer pan={lane.pan} isDark={isDark} />
                                         <div style={{ opacity: 0.9, letterSpacing: 0.4, width: 24, textTransform: 'uppercase' }}>{lanes === 4 ? ["s", "a", "t", "b"][i] : `v${i + 1}`}</div>
                                         <div style={{ opacity: 0.85, minWidth: 30, textAlign: 'left' }}>{midiToNote(lane.pitch)}</div>
                                     </div>
 
                                     {analysers && (
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, justifyContent: 'flex-end', paddingRight: 16, maxWidth: '56%' }}>
-                                            <MiniVU analyser={analysers.time} width={85} />
-                                            <OscilloscopeMini analyser={analysers.time} width={120} />
-                                            <SpectrumBars analyser={analysers.freq} width={80} />
+                                            <MiniVU analyser={analysers.time} width={85} isDark={isDark} />
+                                            <OscilloscopeMini analyser={analysers.time} width={120} isDark={isDark} />
+                                            <SpectrumBars analyser={analysers.freq} width={80} isDark={isDark} />
                                         </div>
                                     )}
                                 </div>
@@ -796,12 +999,11 @@ export function ConductorLaneVisualizer() {
                 {lanes > 1 && (
                     <div style={{ pointerEvents: 'none', position: 'absolute', inset: 0, zIndex: 40 }}>
                         {Array.from({ length: lanes - 1 }).map((_, i) => (
-                            <div key={i} style={{ position: 'absolute', top: 0, bottom: 0, width: 2, background: 'rgba(92,74,54,0.2)', left: `${((i + 1) * 100) / lanes}%` }} />
+                            <div key={i} style={{ position: 'absolute', top: 0, bottom: 0, width: 2, background: palette.borderSecondary, left: `${((i + 1) * 100) / lanes}%`, transition: 'background 0.2s' }} />
                         ))}
                     </div>
                 )}
 
-                {/* L marker */}
                 <div 
                     onPointerDown={!useHandTracking ? start('L') : undefined}
                     style={{ 
@@ -811,7 +1013,7 @@ export function ConductorLaneVisualizer() {
                         height: 32, 
                         width: 32, 
                         borderRadius: 16, 
-                        background: '#e7d9be',
+                        background: palette.markerL,
                         display: 'flex', 
                         alignItems: 'center', 
                         justifyContent: 'center', 
@@ -819,13 +1021,13 @@ export function ConductorLaneVisualizer() {
                         pointerEvents: useHandTracking ? 'none' : 'auto',
                         fontWeight: 600,
                         fontSize: 14,
-                        color: '#2b241c'
+                        color: palette.textPrimary,
+                        transition: 'background 0.2s, color 0.2s'
                     }}
                 >
                     L
                 </div>
 
-                {/* R marker */}
                 <div 
                     onPointerDown={!useHandTracking ? start('R') : undefined}
                     style={{ 
@@ -835,7 +1037,7 @@ export function ConductorLaneVisualizer() {
                         height: 32, 
                         width: 32, 
                         borderRadius: 16, 
-                        background: '#f0dcc2',
+                        background: palette.markerR,
                         display: 'flex', 
                         alignItems: 'center', 
                         justifyContent: 'center', 
@@ -843,7 +1045,8 @@ export function ConductorLaneVisualizer() {
                         pointerEvents: useHandTracking ? 'none' : 'auto',
                         fontWeight: 600,
                         fontSize: 14,
-                        color: '#2b241c'
+                        color: palette.textPrimary,
+                        transition: 'background 0.2s, color 0.2s'
                     }}
                 >
                     R
@@ -853,10 +1056,12 @@ export function ConductorLaneVisualizer() {
     );
 }
 
-// App 
+// ============================================================
+// APP WRAPPER
+// ============================================================
 export default function App() {
     return (
-        <div style={{ width: '100%', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f4ede0' }}>
+        <div className="min-h-screen w-full flex items-center justify-center bg-[#f4ede0] dark:bg-[#0f0f0f] transition-colors duration-200">
             <ConductorLaneVisualizer />
         </div>
     );
