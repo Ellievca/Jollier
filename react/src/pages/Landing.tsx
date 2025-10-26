@@ -18,11 +18,21 @@ export default function LandingPage() {
     : { opacity: 1, y: 0, scale: 1, rotateX: 0, filter: "blur(0px)" };
 
   return (
-    <main className="min-h-dvh grid place-items-center bg-[#f4ede0] text-white">
-      {/* Perspective wrapper enhances the 3D feel */}
-      <div style={{ perspective: 1200 }}>
+    <main className="relative min-h-dvh grid place-items-center overflow-hidden bg-[#f4ede0] text-white">
+      {/* 🌐 Background spinning cube */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 0.25 }}
+        transition={{ duration: 2.5, ease: easeOutExpo }}
+        className="absolute inset-0 flex items-center justify-center pointer-events-none"
+      >
+        <SpinningCube />
+      </motion.div>
+
+      {/* Foreground content */}
+      <div style={{ perspective: 1200 }} className="relative z-10">
         <div className="text-center select-none">
-          {/* Gradient text with fall-in */}
+          {/* Title with fall-in animation */}
           <motion.h1
             initial={initialTitle}
             animate={animateTitle}
@@ -30,13 +40,12 @@ export default function LandingPage() {
               duration: 4,
               ease: easeOutExpo,
             }}
-            className="
-              text-6xl sm:text-7xl font-extralight tracking-widest text-[#5C4A36]"
+            className="text-6xl sm:text-7xl font-extralight tracking-widest text-[#5C4A36]"
           >
             nodal
           </motion.h1>
 
-          {/* Subtle glow that also fades in (purely optional visual polish) */}
+          {/* Subtle glow */}
           <motion.div
             initial={reduce ? { opacity: 0 } : { opacity: 0, scale: 1.1 }}
             animate={reduce ? { opacity: 0.08 } : { opacity: 0.12, scale: 1 }}
@@ -45,7 +54,7 @@ export default function LandingPage() {
             className="mx-auto mt-2 h-8 w-56 rounded-full bg-gradient-to-r from-indigo-500/40 via-purple-500/40 to-pink-500/40 blur-2xl"
           />
 
-          {/* Start button fades in after the title lands */}
+          {/* Start button */}
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
