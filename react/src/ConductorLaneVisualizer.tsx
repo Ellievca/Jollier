@@ -1,9 +1,9 @@
 import React, { useMemo, useRef, useState, useEffect } from "react";
 import { initWebMIDI } from "./utils/webmidi";
+import HandTracker from "./components/HandTracker";
 
 /**
- * Conductor Lane Visualizer — FULL RESTORE (~650 lines)
- * (unchanged intro comment)
+ * Conductor Lane Visualizer with Hand Tracking Support
  */
 
 // ---------------- Helper constants & functions ----------------
@@ -17,11 +17,7 @@ const SCALES: Record<string, number[]> = {
     mixolydian: [0, 2, 4, 5, 7, 9, 10],
 };
 
-// ▶︎ Set this to 1 if your WebMIDI uses channels 1–16 (most DAWs).
-// ▶︎ Set this to 0 if your WebMIDI wrapper uses channels 0–15.
 const MIDI_CHANNEL_BASE = 1;
-
-// put this near the top of the file (module scope)
 const PREVIEW_TONE = false;
 
 function midiToNote(m: number) {
@@ -50,7 +46,6 @@ function computePanForX(x: number, r: DOMRect, l: number) {
 }
 function pitchToIntensity(p: number) { const min = 36, max = 84; return Math.max(0, Math.min(1, (p - min) / (max - min))); }
 
-// Compute directional targets for editing/highlighting.
 function computeTargetIndicesDirectional(
     lanes: number,
     editCount: number,
@@ -430,6 +425,9 @@ export function ConductorLaneVisualizer() {
     const [right, setRight] = useState({ x: 480, y: 200 });
     const [dragging, setDragging] = useState<null | 'L' | 'R'>(null);
 
+    // Hand tracking state
+    const [useHandTracking, setUseHandTracking] = useState(false);
+
     // MIDI env + note memory / throttle / pan cache
     const midiRef = useRef<Awaited<ReturnType<typeof initWebMIDI>> | null>(null);
     const lastNoteRef = useRef<(number | undefined)[]>([]);
@@ -461,20 +459,18 @@ export function ConductorLaneVisualizer() {
             const midi = await initWebMIDI(/IAC|loopMIDI|Ableton|DAW|Bus 1/i);
             if (!midi || !mounted) return;
 
-            // Pick your ports (adjust patterns to your exact port names)
-            midi.pickIn(/From Ableton|from DAW|to Browser|Visualizer In|IAC|loopMIDI/i); // INTO the app
-            midi.pick(/To Ableton|to DAW|IAC.*Bus 1|loopMIDI/i);                        // OUT to Ableton
+            midi.pickIn(/From Ableton|from DAW|to Browser|Visualizer In|IAC|loopMIDI/i);
+            midi.pick(/To Ableton|to DAW|IAC.*Bus 1|loopMIDI/i);
 
             midiRef.current = midi;
             console.log('[MIDI] IN =', midi.in?.name, 'OUT =', midi.out?.name);
 
             const toLane = (ch: number) => {
-                // Map MIDI channel -> lane index: channel=MIDI_CHANNEL_BASE maps to lane 0, etc.
                 return Math.max(0, Math.min(lanes - 1, ch - MIDI_CHANNEL_BASE));
             };
 
             offNote = midi.onNote(({ ch, note, on }) => {
-                if (!on) return; // UI only; do NOT forward
+                if (!on) return;
                 const laneIndex = toLane(ch);
                 setLaneData(prev => {
                     const u = [...prev];
@@ -485,7 +481,7 @@ export function ConductorLaneVisualizer() {
             });
 
             offCC = midi.onCC(({ ch, cc, val }) => {
-                if (cc !== 10) return; // pan only; UI only
+                if (cc !== 10) return;
                 const laneIndex = toLane(ch);
                 setLaneData(prev => {
                     const u = [...prev];
@@ -517,7 +513,6 @@ export function ConductorLaneVisualizer() {
         markHighlight(targets);
         setLaneData(prev => { const u = [...prev]; targets.forEach(idx => { const lane = u[idx] ?? { pitch: 60, pan: 64 }; u[idx] = { ...lane, pitch, pan }; setLanePan(idx, pan); }); return u; });
 
-        // MIDI OUT: throttled, per-lane channel mapping with base
         const nowMs = performance.now();
         if (nowMs - lastSendMsRef.current < 30) {
             if (w === 'L') { setLeft({ x: x - r.left, y: y - r.top }); } else { setRight({ x: x - r.left, y: y - r.top }); }
@@ -534,7 +529,6 @@ export function ConductorLaneVisualizer() {
 
                 if (prevNote != null && prevNote !== newNote) {
                     out.sendNoteOff(ch - 1, prevNote);
-
                 }
                 if (prevNote !== newNote) {
                     const vel = Math.max(1, Math.min(127, Math.round(20 + 100 * pitchToIntensity(newNote))));
@@ -552,10 +546,40 @@ export function ConductorLaneVisualizer() {
         if (w === 'L') { setLeft({ x: x - r.left, y: y - r.top }); } else { setRight({ x: x - r.left, y: y - r.top }); }
     };
 
-    const onMove = (e: React.PointerEvent) => { if (!dragging || !stageRef.current) return; updatePitchAt(e.clientX, e.clientY, dragging); };
-    const start = (w: 'L' | 'R') => (e: React.PointerEvent) => { setDragging(w); updatePitchAt(e.clientX, e.clientY, w); };
+    // Hand tracking handler
+    const handleHandUpdate = (centers: Array<{x: number, y: number, label: string}>) => {
+        if (!stageRef.current || !useHandTracking) return;
+        
+        const stageRect = stageRef.current.getBoundingClientRect();
+        const videoWidth = 640;
+        const videoHeight = 480;
+        
+        centers.forEach(hand => {
+            // Map hand position from video coordinates to stage coordinates
+            // Mirror x coordinate since video is mirrored
+            const mappedX = stageRect.left + ((videoWidth - hand.x) / videoWidth) * stageRect.width;
+            const mappedY = stageRect.top + (hand.y / videoHeight) * stageRect.height;
+            
+            // Update position based on hand label
+            if (hand.label === 'left') {
+                updatePitchAt(mappedX, mappedY, 'R'); // Mirrored: left hand controls R marker
+            } else if (hand.label === 'right') {
+                updatePitchAt(mappedX, mappedY, 'L'); // Mirrored: right hand controls L marker
+            }
+        });
+    };
 
-    // On stop: send NoteOffs to clear hanging notes
+    // Hidden hand tracker for background processing
+    useEffect(() => {
+        if (!useHandTracking) return;
+        
+        // This effect will trigger the HandTracker to mount/unmount
+        // The HandTracker is rendered hidden below
+    }, [useHandTracking]);
+
+    const onMove = (e: React.PointerEvent) => { if (!dragging || !stageRef.current || useHandTracking) return; updatePitchAt(e.clientX, e.clientY, dragging); };
+    const start = (w: 'L' | 'R') => (e: React.PointerEvent) => { if (useHandTracking) return; setDragging(w); updatePitchAt(e.clientX, e.clientY, w); };
+
     const stop = () => {
         if (dragging && midiRef.current) {
             const out = midiRef.current;
@@ -571,14 +595,13 @@ export function ConductorLaneVisualizer() {
         setDragging(null);
     };
 
-    // Panic on unmount or lanes change: All Notes Off
     useEffect(() => {
         return () => {
             const out = midiRef.current;
             if (out) {
                 for (let i = 0; i < Math.min(16, lanes); i++) {
                     const ch = Math.min(16, Math.max(MIDI_CHANNEL_BASE, i + MIDI_CHANNEL_BASE));
-                    out.sendCC(ch - 1, 123, 0); // CC123 = All Notes Off
+                    out.sendCC(ch - 1, 123, 0);
                 }
             }
         };
@@ -591,9 +614,20 @@ export function ConductorLaneVisualizer() {
 
     return (
         <div style={containerStyle}>
-            {/* (UI unchanged below) */}
             <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, letterSpacing: 0.4 }}>lane mode</div>
+                
+                {/* Hand Tracking Toggle */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, fontWeight: 600, padding: '6px 12px', background: useHandTracking ? 'rgba(74, 158, 255, 0.2)' : 'rgba(255, 255, 255, 0.35)', borderRadius: 999, border: '1px solid #5C4A36', cursor: 'pointer', userSelect: 'none' }}>
+                    <input 
+                        type="checkbox" 
+                        checked={useHandTracking} 
+                        onChange={(e) => setUseHandTracking(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                    />
+                    <span>👋 Hand Tracking</span>
+                </label>
+
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ fontSize: 12, opacity: 0.8 }}>voices</div>
                     <select value={String(lanes)} onChange={(e) => setLanes(parseInt(e.target.value))} style={{ height: 26, padding: '0 8px' }}>
@@ -626,6 +660,13 @@ export function ConductorLaneVisualizer() {
                 </div>
             </div>
 
+            {/* Hand Tracker - hidden, runs in background */}
+            {useHandTracking && (
+                <div style={{ position: 'fixed', top: -10000, left: -10000, pointerEvents: 'none' }}>
+                    <HandTracker onHandUpdate={handleHandUpdate} />
+                </div>
+            )}
+
             <div ref={stageRef} onPointerMove={onMove} onPointerUp={stop} onPointerLeave={stop} style={stageStyle}>
                 {Array.from({ length: lanes }).map((_, i) => {
                     const lane = getLane(i);
@@ -633,12 +674,12 @@ export function ConductorLaneVisualizer() {
                     const baseAlpha = 0.28 + pitchToIntensity(lane.pitch) * 0.22;
                     const bgAlpha = baseAlpha * alpha;
                     const glow = alpha > 0 ? `inset 0 0 0 2px rgba(138, 212, 170, ${0.55 * alpha}), 0 0 ${18 * alpha}px rgba(186, 240, 207, ${0.55 * alpha})` : 'none';
-                    const laneStyle: React.CSS_PROPERTIES = {
+                    const laneStyle: React.CSSProperties = {
                         position: 'absolute', top: 0, bottom: 0, left: `${(i * 100) / lanes}%`, width: `${100 / lanes}%`, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
                         borderRight: i !== lanes - 1 ? '1px solid #5C4A36' : 'none',
                         background: alpha > 0 ? `rgba(186,240,207,${bgAlpha})` : undefined,
                         boxShadow: glow
-                    } as React.CSSProperties;
+                    };
                     const analysers = getLaneAnalysers(i);
                     return (
                         <div key={i} style={laneStyle}>
@@ -683,8 +724,53 @@ export function ConductorLaneVisualizer() {
                     </div>
                 )}
 
-                <div onPointerDown={(e) => { setDragging('L'); updatePitchAt(e.clientX, e.clientY, 'L'); }} style={{ position: 'absolute', left: left.x - 16, top: left.y - 16, height: 32, width: 32, borderRadius: 16, background: '#e7d9be', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'grab' }}>L</div>
-                <div onPointerDown={(e) => { setDragging('R'); updatePitchAt(e.clientX, e.clientY, 'R'); }} style={{ position: 'absolute', left: right.x - 16, top: right.y - 16, height: 32, width: 32, borderRadius: 16, background: '#f0dcc2', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'grab' }}>R</div>
+                {/* L marker */}
+                <div 
+                    onPointerDown={!useHandTracking ? start('L') : undefined}
+                    style={{ 
+                        position: 'absolute', 
+                        left: left.x - 16, 
+                        top: left.y - 16, 
+                        height: 32, 
+                        width: 32, 
+                        borderRadius: 16, 
+                        background: '#e7d9be',
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        cursor: useHandTracking ? 'default' : 'grab',
+                        pointerEvents: useHandTracking ? 'none' : 'auto',
+                        fontWeight: 600,
+                        fontSize: 14,
+                        color: '#2b241c'
+                    }}
+                >
+                    L
+                </div>
+
+                {/* R marker */}
+                <div 
+                    onPointerDown={!useHandTracking ? start('R') : undefined}
+                    style={{ 
+                        position: 'absolute', 
+                        left: right.x - 16, 
+                        top: right.y - 16, 
+                        height: 32, 
+                        width: 32, 
+                        borderRadius: 16, 
+                        background: '#f0dcc2',
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        cursor: useHandTracking ? 'default' : 'grab',
+                        pointerEvents: useHandTracking ? 'none' : 'auto',
+                        fontWeight: 600,
+                        fontSize: 14,
+                        color: '#2b241c'
+                    }}
+                >
+                    R
+                </div>
             </div>
         </div>
     );
