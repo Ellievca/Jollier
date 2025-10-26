@@ -1,10 +1,23 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App'
-import './index.css'
+import React from "react";
+import ReactDOM from "react-dom/client";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import "./index.css";
+import App from "./App";
+import LandingPage from "./pages/Landing"; 
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
+const router = createBrowserRouter([
+  { path: "/", element: <LandingPage /> },
+  { path: "/app", element: <App /> },
+]);
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
+<<<<<<< Updated upstream
     <App />
   </React.StrictMode>,
 )
+=======
+    <RouterProvider router={router} />
+  </React.StrictMode>
+);
+>>>>>>> Stashed changes
