@@ -17,6 +17,7 @@ env/
 .DS_Store
 .vscode/
 .idea/
+node_modules/
 
 # --- Big assets / generated stuff ---
 assets/sf2/

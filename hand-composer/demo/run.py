@@ -1,4 +1,4 @@
-import time
+import torch, time
 import cv2
 import pygame
 import numpy as np
@@ -14,6 +14,14 @@ from collections import deque
 SAFE_MODE = False # for debug, set to true if freezing / no audio desired
 
 KEY_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+ADC_URL = "http://localhost:8000/predict"
+
+import requests
+def gpu_quality(left_hand_21):
+    r = requests.post(ADC_URL, json={"left21": left_hand_21.tolist()})
+    r.raise_for_status()
+    return r.json()["quality"]
 
 class RootSmoother:
     """
@@ -80,6 +88,10 @@ def main():
     #synth = MidiEngine(soundfont_path="/Users/ellie/Downloads/FluidR3_GM.sf2")
 
     hud = HUD()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    from perception.classifier import load_classifier, predict_quality
+    clf = load_classifier(device)
+    use_gpu_classifier = torch.cuda.is_available()
 
     smoother = RootSmoother(low = 48, high = 72, alpha = 0.35, deadband_semi = 0.5, max_step_semi = 1, min_interval_ms = 100)
 
@@ -115,6 +127,8 @@ def main():
                         synth.panic() #stops all notes
                     elif event.key == pygame.K_ESCAPE:
                         last_quit = True
+                    elif event.key == pygame.K_g:
+                        use_gpu_classifier = not use_gpu_classifier
             if last_quit:
                 synth.stop()
                 tracker.release()
@@ -141,8 +155,19 @@ def main():
             now_ms = int(time.time() * 1000)
 
             root = smoother.update(hands, now_ms) + main_key_semitones
-            qual = left_pose_quality(hands)
+            #qual = left_pose_quality(hands)
+            qual = "maj"
+            infer_ms = 0.0
+            if hands is not None and hands.shape[0] >= 2:
+                t0c = time.time()
+            try:
+                qual = gpu_quality(hands[1])
+            except Exception as e:
+                print("[GPU RPC] error, falling back to CPU:", e)
+                qual = left_pose_quality(hands)
+            infer_ms = (time.time() - t0c) * 1000.0
             notes = chord_from(root, qual)
+            
             from music.chord_mapper import voice_chord
             notes = voice_chord(notes, low = 48, high = 72)
             velo = velocity_from_spread(hands)
@@ -154,14 +179,12 @@ def main():
                     last_notes = notes
                 except Exception as e:
                     print("[MIDI] play_chord error:", e)
-                
-            if synth:
-                synth.play_chord(notes, velo)
 
             infer_ms = (time.time() - t0) * 1000.0
             chord_lbl = label_chord(notes)
             keyname = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"][main_key_semitones]
-            help_line = f"Key: {keyname} | S: Scale lock [{'ON' if scale_lock else 'OFF'}] | Up/Down: Change key | Space: Panic"
+            mode = "GPU" if (use_gpu_classifier and torch.cuda.is_available()) else "CPU"
+            help_line = f"Key: {keyname} | S: Scale lock [{'ON' if scale_lock else 'OFF'}] | Up/Down: Change key | G: Toggle [{mode}] | Space: Panic"
             hud.draw(frame, chord_lbl, bpm, velo, fps_cam, infer_ms, extra_lines =[help_line])
 
             clock.tick(30) #cap fps at 30
