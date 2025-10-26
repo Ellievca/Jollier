@@ -65,7 +65,7 @@ export default function LandingPage() {
             <Link
               to="/app"
               onClick={() => {
-              const audio = new Audio("/assets/startup.wav"); // path to your sound file
+              const audio = new Audio("/public/startup.wav"); // path to your sound file
               audio.volume = 0.3; // adjust volume (0.0–1.0)
               audio.play();
               }}
